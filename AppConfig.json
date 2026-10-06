@@ -1,0 +1,11 @@
+{
+  "module": "Savings",
+  "name": "搞积蓄",
+  "bundle_id": "com.gaojixu.savings",
+  "executable": "GaoJiXu",
+  "scheme": "gaojixu",
+  "widget_folder": "Widgets",
+  "widget": "GaoJiXuWidgets",
+  "group": "5G96498KGJ.com.gaojixu.savings",
+  "preferences": "com.gaojixu.savings.Savings"
+}
