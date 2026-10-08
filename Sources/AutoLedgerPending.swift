@@ -141,6 +141,7 @@ struct PendingAutoLedgerBanner: View {
 struct AutoLedgerReconciliationCard: View {
     @EnvironmentObject private var store: SavingsStore
     @State private var tasks: [PendingAutoLedgerTask] = PendingAutoLedger.allTasks()
+    private let visibleTaskLimit = 5
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -157,7 +158,7 @@ struct AutoLedgerReconciliationCard: View {
         VStack(alignment: .leading, spacing: 10) {
             Label(tS("月供 ↔ 记账核对", "Bills ↔ Ledger"), systemImage: "checklist")
                 .font(.headline)
-            ForEach(tasks.prefix(10)) { task in
+            ForEach(tasks.prefix(visibleTaskLimit)) { task in
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(tS("月供·", "Monthly·") + task.title).font(.callout.weight(.medium))
@@ -168,8 +169,8 @@ struct AutoLedgerReconciliationCard: View {
                     statusView(task)
                 }
             }
-            if tasks.count > 10 {
-                Text(tS("另有 \(tasks.count - 10) 条更早记录", "\(tasks.count - 10) older entries")).font(.caption2).foregroundStyle(.tertiary)
+            if tasks.count > visibleTaskLimit {
+                Text(tS("另有 \(tasks.count - visibleTaskLimit) 条更早记录", "\(tasks.count - visibleTaskLimit) older entries")).font(.caption2).foregroundStyle(.tertiary)
             }
         }
         .padding(14)

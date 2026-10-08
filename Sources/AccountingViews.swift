@@ -15,8 +15,6 @@ struct FinancialOverviewView: View {
             VStack(alignment: .leading, spacing: 18) {
                 // P0-2：月供自动记账待处理项（无匹配币种账户时在此由用户选账户入账）。
                 PendingAutoLedgerBanner()
-                // 3.36：月供 ↔ 记账核对表（已入账/待处理/失败/已忽略可撤销）。
-                AutoLedgerReconciliationCard()
                 HStack {
                     Picker("统计币种", selection: $currency) {
                         ForEach(SavingsCurrency.allCases) { value in Text(value.displayName).tag(value) }
@@ -116,6 +114,9 @@ struct FinancialOverviewView: View {
 
                 // 3.37③：整月日历挪到首屏末尾且默认折叠（记住用户选择）。
                 CollapsibleCalendarCard(currency: currency)
+
+                // 核对表置于总览末尾，仅展示最近五笔月供扣款。
+                AutoLedgerReconciliationCard()
             }
             .padding(.horizontal, 24).padding(.bottom, 28)
         }
