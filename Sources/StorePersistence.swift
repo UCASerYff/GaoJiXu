@@ -1,13 +1,9 @@
 import Darwin
 import Foundation
-#if !SMOKE_TEST
-import AppKit
-import WidgetKit
-#endif
 
 /// 持久化域：防抖保存、加载、沙盒旧档迁移、迁移前备份、完整备份恢复、小组件快照与事件日志。
 extension SavingsStore {
-    private var libraryDirectory: URL {
+    var libraryDirectory: URL {
         if let override = ProcessInfo.processInfo.environment["GAOJIXU_DATA_DIR"], !override.isEmpty {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
@@ -40,6 +36,12 @@ extension SavingsStore {
         guard decoded.version <= Self.currentSchemaVersion else { throw SavingsStoreError.unsupportedVersion }
         setLoadFailed(false)
         apply(decoded)
+        if persistedFinancialFingerprint == nil {
+            persistedFinancialFingerprint = try financialFingerprint()
+            financialRevision = persistedFinancialFingerprint
+            financialUpdatedAt = decoded.financialUpdatedAt
+        }
+        hasLoadedValidLibrary = true
         // 恢复的备份可能含有已到期的周期规则：与启动加载一致，恢复后立即物化一次。
         materializeRecurringTransactions()
         save()
@@ -70,66 +72,91 @@ extension SavingsStore {
         guard !loadFailed else { return false }
         pendingSaveWorkItem?.cancel()
         pendingSaveWorkItem = nil
-        guard saveIsDirty || saveDebounceInterval <= 0 else { return true }
+        guard saveIsDirty || saveDebounceInterval <= 0 else {
+            refreshWidgetSnapshotIfNeeded()
+            return true
+        }
         let success = persistNow()
         saveIsDirty = !success
+        if success { refreshWidgetSnapshotIfNeeded() }
         return success
     }
 
     private func persistNow() -> Bool {
         do {
             try FileManager.default.createDirectory(at: libraryDirectory, withIntermediateDirectories: true)
-            let data = try encoder.encode(snapshot()), temporary = libraryURL.appendingPathExtension("tmp")
+            let fingerprint = try financialFingerprint()
+            let financialContentChanged = persistedFinancialFingerprint != nil && fingerprint != persistedFinancialFingerprint
+            var library = snapshot()
+            library.financialRevision = fingerprint
+            library.financialUpdatedAt = financialContentChanged ? snapshotNow() : financialUpdatedAt
+            let data = try encoder.encode(library), temporary = libraryURL.appendingPathExtension("tmp")
             try data.write(to: temporary, options: .atomic)
             if FileManager.default.fileExists(atPath: libraryURL.path) { _ = try FileManager.default.replaceItemAt(libraryURL, withItemAt: temporary) }
             else { try FileManager.default.moveItem(at: temporary, to: libraryURL) }
-            #if !SMOKE_TEST
-            // 小组件快照重算昂贵（O(账户×流水×天数)）：仅财务口径变化或快照缺失时才重写。
-            let snapshotTargets = [GaoJiXuWidgetSnapshot.fileURL, GaoJiXuWidgetSnapshot.fallbackFileURL].compactMap { $0 }
-            let snapshotMissing = snapshotTargets.contains { !FileManager.default.fileExists(atPath: $0.path) }
-            if financesDirty || snapshotMissing {
-                writeWidgetSnapshot()
-                WidgetCenter.shared.reloadAllTimelines()
-                financesDirty = false
-            }
-            #endif
+            // Only acknowledge the financial revision after its business library is durable.
+            financialRevision = fingerprint
+            financialUpdatedAt = library.financialUpdatedAt
+            persistedFinancialFingerprint = fingerprint
+            financialSourceSavedAt = (try? FileManager.default.attributesOfItem(atPath: libraryURL.path)[.modificationDate]) as? Date
+            if financialContentChanged { financesDirty = true; pendingWidgetSnapshot = nil }
             return true
         } catch { notice = "数据保存失败：\(error.localizedDescription)"; return false }
     }
 
     func load() {
-        migrateLegacySandboxDataIfNeeded()
-        guard FileManager.default.fileExists(atPath: libraryURL.path) else {
-            apply(Self.starterLibrary())
-            // 启动加载完成后物化一次到期的周期记账（幂等，规则为空时无操作）。
-            materializeRecurringTransactions()
-            save(); flushSave()
-            return
-        }
         do {
+            try migrateLegacySandboxDataIfNeeded()
+            let exists: Bool
+            do { _ = try FileManager.default.attributesOfItem(atPath: libraryURL.path); exists = true }
+            catch {
+                guard Self.isMissingFile(error) else { throw error }
+                exists = false
+            }
+            if !exists {
+                // A missing library beside existing data is a failure, never evidence of a new user.
+                guard !hasExistingDataEvidence() else { throw CocoaError(.fileReadNoSuchFile) }
+                apply(Self.starterLibrary())
+                financialRevision = try financialFingerprint()
+                persistedFinancialFingerprint = financialRevision
+                financialUpdatedAt = nil
+                hasLoadedValidLibrary = true
+                setLoadFailed(false)
+                materializeRecurringTransactions()
+                save(); flushSave()
+                return
+            }
             let decoded = try decoder.decode(SavingsLibrary.self, from: Data(contentsOf: libraryURL))
             guard decoded.version <= Self.currentSchemaVersion else { throw SavingsStoreError.unsupportedVersion }
             apply(decoded)
+            // Legacy libraries have no reliable financial modification time. Do not invent one.
+            financialRevision = try financialFingerprint()
+            persistedFinancialFingerprint = financialRevision
+            financialUpdatedAt = decoded.financialUpdatedAt
+            financialSourceSavedAt = (try? FileManager.default.attributesOfItem(atPath: libraryURL.path)[.modificationDate]) as? Date
+            hasLoadedValidLibrary = true
             setLoadFailed(false)
             materializeRecurringTransactions()
             save(); flushSave()
         } catch {
             // 读取失败时不落盘，避免覆盖原文件。
             setLoadFailed(true)
+            hasLoadedValidLibrary = false
             apply(Self.starterLibrary()); notice = "资料库读取失败，已进入只读保护。请从备份恢复；自动保存与战斗已暂停：\(error.localizedDescription)"
         }
     }
 
     /// 启用沙盒后 applicationSupportDirectory 指向容器，旧存档仍位于真实主目录。
-    /// 首次启动时把旧数据目录整体只读拷贝过来；任何失败都静默回退到原有逻辑（绝不动旧文件）。
-    private func migrateLegacySandboxDataIfNeeded() {
+    /// 首次启动只读拷贝旧目录；失败进入保护，不能把未读到的旧资料当成新资料。
+    private func migrateLegacySandboxDataIfNeeded() throws {
         if let override = ProcessInfo.processInfo.environment["GAOJIXU_DATA_DIR"], !override.isEmpty { return }
         let fileManager = FileManager.default
         guard !fileManager.fileExists(atPath: libraryURL.path) else { return }
         guard let home = getpwuid(getuid())?.pointee.pw_dir.map({ String(cString: $0) }) else { return }
         let legacyDirectory = URL(fileURLWithPath: home, isDirectory: true)
             .appendingPathComponent("Library/Application Support/GaoJiXu", isDirectory: true)
-        guard fileManager.fileExists(atPath: legacyDirectory.appendingPathComponent("library.json").path) else { return }
+        do { _ = try fileManager.attributesOfItem(atPath: legacyDirectory.appendingPathComponent("library.json").path) }
+        catch { if Self.isMissingFile(error) { return }; throw error }
         do {
             try fileManager.createDirectory(at: libraryDirectory, withIntermediateDirectories: true)
             for item in try fileManager.contentsOfDirectory(atPath: legacyDirectory.path) {
@@ -137,9 +164,7 @@ extension SavingsStore {
                 guard !fileManager.fileExists(atPath: destination.path) else { continue }
                 try fileManager.copyItem(at: legacyDirectory.appendingPathComponent(item), to: destination)
             }
-        } catch {
-            // 尽力而为的增强：失败不影响后续 starter library 回退。
-        }
+        } catch { throw error }
     }
 
     /// 版本迁移写盘前，把磁盘上的旧存档留一份只读拷贝（已存在则不覆盖）。
@@ -152,47 +177,24 @@ extension SavingsStore {
         try? fileManager.copyItem(at: libraryURL, to: backupURL)
     }
 
-    #if !SMOKE_TEST
-    private func writeWidgetSnapshot() {
-        let currency = SavingsCurrency(rawValue: widgetCurrencyCode) ?? .CNY
-        let calendar = Calendar.autoupdatingCurrent
-        let now = Date()
-        let components = calendar.dateComponents([.year, .month], from: now)
-        guard let monthStart = calendar.date(from: components) else { return }
-        let monthTitle = SavingsFormatters.month.string(from: monthStart)
-        let currencyAccounts = netWorthAccounts(currency: currency)
-        let days = dailyFinanceSummary(currency: currency, month: now)
-        // 本月预算（快照统计币种口径）：未设预算时写 nil，小组件显示「未设预算」态。
-        let monthKey = SavingsFormatters.monthKey(now)
-        let budgetTotalValue = totalBudget(monthKey: monthKey, currency: currency)
-        let budgetTotal: Double? = budgetTotalValue > 0 ? budgetTotalValue : nil
-        let budgetSpent: Double? = budgetTotal.map { _ in totalBudgetSpent(monthKey: monthKey, currency: currency) }
-        let snapshot = GaoJiXuWidgetSnapshot(
-            updatedAt: now,
-            monthStart: monthStart,
-            monthTitle: monthTitle,
-            currencyCode: currency.rawValue,
-            currencySymbol: currency.symbol,
-            days: days,
-            netWorth: netWorth(currency: currency),
-            accounts: currencyAccounts.map {
-                .init(id: $0.id, name: $0.name, balance: netWorthContribution(for: $0), symbol: $0.symbol)
-            },
-            currency: currency.rawValue,
-            budgetTotal: budgetTotal,
-            budgetSpent: budgetSpent
-        )
-        do {
-            let data = try encoder.encode(snapshot)
-            for url in [GaoJiXuWidgetSnapshot.fileURL, GaoJiXuWidgetSnapshot.fallbackFileURL].compactMap({ $0 }) {
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try data.write(to: url, options: .atomic)
-            }
-        } catch {
-            // A widget snapshot is auxiliary; a failure must never block the finance save.
-        }
+    private static func isMissingFile(_ error: Error) -> Bool {
+        let error = error as NSError
+        return (error.domain == NSCocoaErrorDomain && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code)) ||
+            (error.domain == NSPOSIXErrorDomain && error.code == Int(ENOENT))
     }
-    #endif
+
+    private func hasExistingDataEvidence() -> Bool {
+        let snapshotTargets = widgetSnapshotTargets().compactMap({ $0 })
+        let lastValidTargets = snapshotTargets.map { $0.deletingLastPathComponent().appendingPathComponent("gaojixu-widget-last-valid.json") }
+        for url in snapshotTargets + lastValidTargets {
+            do { _ = try FileManager.default.attributesOfItem(atPath: url.path); return true }
+            catch { if !Self.isMissingFile(error) { return true } }
+        }
+        do {
+            let files = try FileManager.default.contentsOfDirectory(atPath: libraryDirectory.path)
+            return files.contains { $0 != ".DS_Store" && !$0.hasPrefix(".com.apple.") }
+        } catch { return !Self.isMissingFile(error) }
+    }
 
     // MARK: - Reward event log
 

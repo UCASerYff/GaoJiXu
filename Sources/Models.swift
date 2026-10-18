@@ -1032,6 +1032,9 @@ struct DrawHistoryEntry: Codable, Identifiable, Hashable {
 
 struct SavingsLibrary: Codable {
     var lastLedgerAccountID: String? = nil
+    /// 只描述财务内容；游戏自动保存不会推进这两个字段。旧资料的变更时间未知时保留 nil。
+    var financialRevision: String? = nil
+    var financialUpdatedAt: Date? = nil
     var version: Int
     var goals: [SavingsGoal]
     var records: [SavingsRecord]

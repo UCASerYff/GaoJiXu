@@ -176,6 +176,14 @@ struct ContentView: View {
         }
         .disabled(store.loadFailed)
         .overlay(alignment: .top) { if store.loadFailed { Text("资料库只读保护 · 请在设置中恢复备份").padding(12).background(.regularMaterial,in:Capsule()) } }
+        .safeAreaInset(edge: .bottom) {
+            if !store.loadFailed, let message = store.widgetSnapshotError {
+                Label(message, systemImage: "arrow.clockwise.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding(.horizontal, 16).padding(.vertical, 6)
+                    .frame(maxWidth: .infinity).background(.regularMaterial)
+            }
+        }
         // 小组件深链：gaojixu://ledger 打开记账页，gaojixu://overview 打开财务总览，
         // gaojixu://budgets 打开预算页；其余地址忽略。深链由主 app 统一路由（route/routeRevision），
         // 模块内不再挂 onOpenURL，避免执行两遍。
@@ -442,18 +450,9 @@ struct ContentView: View {
     }
 
     /// 小组件快照币种跟随「新目标默认币种」。
-    /// 已核实：flushSave() 在无脏数据时是 no-op，而快照只在财务脏或文件缺失时重写，
-    /// 直接调用不会更新币种。因此币种变化时先删除旧快照文件，再走 persistNow 的
-    /// 「快照缺失」分支立即重建（save() 标记脏数据，flushSave() 同步落盘）。
+    /// 由数据层原子发布并保留失败重试，不能先删除最后有效快照。
     private func syncWidgetSnapshotCurrency() {
-        let code = settings.defaultCurrency.rawValue
-        guard store.widgetCurrencyCode != code else { return }
-        store.widgetCurrencyCode = code
-        for url in [GaoJiXuWidgetSnapshot.fileURL, GaoJiXuWidgetSnapshot.fallbackFileURL].compactMap({ $0 }) {
-            try? FileManager.default.removeItem(at: url)
-        }
-        store.save()
-        store.flushSave()
+        store.setWidgetCurrency(settings.defaultCurrency.rawValue)
     }
 }
 

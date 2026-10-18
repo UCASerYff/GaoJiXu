@@ -25,6 +25,6 @@ if ! ditto "$SOURCE" "$TARGET" || ! codesign --verify --deep --strict "$TARGET" 
 fi
 pluginkit -a "$TARGET/Contents/PlugIns/GaoJiXuWidgets.appex"
 killall -TERM GaoJiXuWidgets 2>/dev/null || true
-killall -TERM chronod 2>/dev/null || true
+# Refresh only this application’s extension; never restart the shared WidgetKit host.
 rm -rf "$ROOT/.install.noindex"
 echo "Installed $TARGET"

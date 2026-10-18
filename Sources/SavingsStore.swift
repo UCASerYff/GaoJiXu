@@ -1,7 +1,7 @@
 import Combine
 import Darwin
 import Foundation
-#if !SMOKE_TEST
+#if !SMOKE_TEST && !UNIT_TEST
 import AppKit
 import WidgetKit
 #endif
@@ -54,19 +54,47 @@ final class SavingsStore: ObservableObject {
     var saveDebounceInterval: TimeInterval = 8
     @Published private(set) var loadFailed = false
     func setLoadFailed(_ value: Bool) { loadFailed = value }
-    /// 小组件快照统计币种。本版本默认 CNY，可由外部设置。
-    var widgetCurrencyCode: String = "CNY"
+    /// 快照币种在第一次加载前确定，避免启动时先发布 CNY 再由视图纠正。
+    var widgetCurrencyCode: String
     /// 财务数据脏标记：只有财务口径变化才需要重算并重写小组件快照。
     var financesDirty = true
     var saveIsDirty = false
     var pendingSaveWorkItem: DispatchWorkItem?
+    var financialRevision: String?
+    var financialUpdatedAt: Date?
+    var persistedFinancialFingerprint: String?
+    var financialSourceSavedAt: Date?
+    var hasLoadedValidLibrary = false
+    var pendingWidgetSnapshot: GaoJiXuWidgetSnapshot?
+    var lastWidgetSnapshot: GaoJiXuWidgetSnapshot?
+    var lastWidgetReloadRevision: String?
+    @Published var widgetSnapshotError: String?
+    var lastCalendarCheck: String?
+    let snapshotNow: () -> Date
+    let snapshotCalendar: () -> Calendar
+    let widgetSnapshotTargets: () -> [URL?]
+    let widgetSnapshotPublisher: (GaoJiXuWidgetSnapshot, [URL]) -> SnapshotPublishResult
+    let widgetSnapshotReloader: () -> Void
 
     @Published var lastLedgerAccountID: String?
 
-    init() {
+    init(widgetCurrencyCode: String? = nil,
+         now: @escaping () -> Date = Date.init,
+         calendar: @escaping () -> Calendar = { Calendar.autoupdatingCurrent },
+         snapshotTargets: @escaping () -> [URL?] = { SavingsStore.defaultWidgetSnapshotTargets() },
+         snapshotPublisher: @escaping (GaoJiXuWidgetSnapshot, [URL]) -> SnapshotPublishResult = { SnapshotIO.publish($0, to: $1) },
+         snapshotReloader: @escaping () -> Void = { SavingsStore.reloadFinanceWidgets() }) {
+        let isolated = ProcessInfo.processInfo.environment["GAOJIXU_DATA_DIR"]?.isEmpty == false
+        let preferredCurrency = widgetCurrencyCode ?? (isolated ? nil : UserDefaults.standard.string(forKey: "savings.defaultCurrency")) ?? "CNY"
+        self.widgetCurrencyCode = SavingsCurrency(rawValue: preferredCurrency)?.rawValue ?? "CNY"
+        snapshotNow = now
+        snapshotCalendar = calendar
+        widgetSnapshotTargets = snapshotTargets
+        widgetSnapshotPublisher = snapshotPublisher
+        widgetSnapshotReloader = snapshotReloader
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         load()
-        #if !SMOKE_TEST
+        #if !SMOKE_TEST && !UNIT_TEST
         // 退出前把防抖窗口内未落盘的脏数据同步写盘。
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.flushSave() }
@@ -77,7 +105,7 @@ final class SavingsStore: ObservableObject {
     // MARK: - Snapshot and migration
 
     func snapshot() -> SavingsLibrary {
-        .init(lastLedgerAccountID: lastLedgerAccountID, version: Self.currentSchemaVersion, goals: goals, records: records, adventure: adventure, equipment: equipment, techniques: techniques,
+        .init(lastLedgerAccountID: lastLedgerAccountID, financialRevision: financialRevision, financialUpdatedAt: financialUpdatedAt, version: Self.currentSchemaVersion, goals: goals, records: records, adventure: adventure, equipment: equipment, techniques: techniques,
               rewardEvents: rewardEvents, drawHistory: drawHistory, accounts: accounts, ledgerEntries: ledgerEntries, budgets: budgets,
               pets: pets, equippedPetIDs: equippedPetIDs, recurringRules: recurringRules)
     }

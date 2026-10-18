@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreText
 import Foundation
+import AppKit
 
 public final class SavingsBundleMarker: NSObject {}
 enum SavingsBundle {
@@ -12,11 +13,27 @@ enum SavingsBundle {
     static let store = SavingsStore()
     static let settings = SavingsSettings()
     static var battleClock: Timer?
+    static var snapshotClock: Timer?
+    static var snapshotObservers: [NSObjectProtocol] = []
     static func start() {
         guard battleClock == nil, ProcessInfo.processInfo.environment["GAOQINIANSAN_INTEGRATION_TEST"] != "1" else { return }
         battleClock = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             MainActor.assumeIsolated { store.performAutoBattleTick() }
         }
+        // This timer only checks pending work and calendar context; it never requests periodic reloads.
+        snapshotClock = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+            MainActor.assumeIsolated { store.maintainWidgetSnapshot() }
+        }
+        for name in [Notification.Name.NSCalendarDayChanged, Notification.Name.NSSystemTimeZoneDidChange,
+                     NSApplication.didBecomeActiveNotification] {
+            snapshotObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { store.maintainWidgetSnapshot(forceRecurring: true) }
+            })
+        }
+        snapshotObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { store.maintainWidgetSnapshot(forceRecurring: true) }
+        })
+        store.maintainWidgetSnapshot(forceRecurring: true)
     }
 
     /// 注册打包的缝合像素字体（OFL 许可，随 Resources/ 拷入 framework Bundle）。
@@ -47,7 +64,7 @@ public struct SavingsModuleView: View {
             .environment(\.locale, Locale(identifier: GQNSLanguage.localeIdentifier))
             .onChange(of: scenePhase) { _, phase in
                 if phase == .background { store.flushSave() }
-                if phase == .active { store.materializeRecurringTransactions() }
+                if phase == .active { store.maintainWidgetSnapshot(forceRecurring: true) }
             }
     }
 }
