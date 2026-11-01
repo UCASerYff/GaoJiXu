@@ -274,8 +274,7 @@ struct LedgerView: View {
     @State private var filter: LedgerEntryKind?
     @SceneStorage("gqns.ledger.search") private var searchText = ""
     @SceneStorage("gqns.ledger.page") private var page=0
-    @State private var editing: LedgerEntry?
-    @State private var showingEditor = false
+    @State private var editorSession: LedgerEditorSession?
     @State private var showingRecurring = false
 
     private var entries: [LedgerEntry] {
@@ -313,7 +312,7 @@ struct LedgerView: View {
                     Spacer()
                     Text("共 \(entries.count) 笔").font(.caption).foregroundStyle(.secondary)
                     Button { showingRecurring = true } label: { Label("周期记账", systemImage: "repeat") }
-                    Button { editing = nil; showingEditor = true } label: { Label("记一笔账", systemImage: "plus") }.buttonStyle(.borderedProminent)
+                    Button { editorSession = .init(entry: nil) } label: { Label("记一笔账", systemImage: "plus") }.buttonStyle(.borderedProminent)
                 }
                 if !currencySubtotals.isEmpty { subtotalBar }
                 GQHistoryPager(page:$page,count:entries.count)
@@ -330,7 +329,7 @@ struct LedgerView: View {
                                     store.notice = "余额调整记录请在资产账户中通过再次修改余额更正。"
                                 } else if store.savingsRecord(forLedgerEntryID: entry.id) != nil {
                                     store.notice = "这笔转账由积蓄计划管理，请在“积蓄记录”中编辑。"
-                                } else { editing = entry; showingEditor = true }
+                                } else { editorSession = .init(entry: entry) }
                             } delete: {
                                 store.deleteLedgerEntry(entry)
                             }
@@ -343,7 +342,9 @@ struct LedgerView: View {
         }
         .onChange(of:searchText) { _,_ in page=0 }
         .onChange(of:filter) { _,_ in page=0 }
-        .sheet(isPresented: $showingEditor) { LedgerEntryEditorView(existingEntry: editing) }
+        .sheet(item: $editorSession) { session in
+            LedgerEntryEditorView(existingEntry: session.entry).id(session.id)
+        }
         .sheet(isPresented: $showingRecurring) { RecurringRulesView() }
     }
 

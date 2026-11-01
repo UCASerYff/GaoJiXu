@@ -35,7 +35,7 @@ struct ContentView: View {
     /// 自绘侧栏导航行的 hover 跟踪（浅灰反馈，与词元一致）。
     @State private var hoveredSection: SavingsSection?
     @State private var showingRecordEditor = false
-    @State private var showingLedgerEditor = false
+    @State private var ledgerEditorSession: LedgerEditorSession?
     @State private var restoreCandidateURL: URL?
     @State private var csvImportContext: CSVImportContext?
     /// 订阅 app 级语言键：值变化时整个模块重渲染（.id 见 body）。
@@ -79,15 +79,13 @@ struct ContentView: View {
             }
             toolbarItemNoChrome(.primaryAction) {
                 HStack(spacing: 12) {
-                    Button {
-                        showingLedgerEditor = true
-                    } label: {
+                    Button(action: presentNewLedgerEntry) {
                         Label(tS("记一笔账", "New Entry"), systemImage: "square.and.pencil")
                     }
                     .buttonStyle(ToolbarProminentStyle())
 
                     Menu {
-                        Button { showingLedgerEditor = true } label: { Label(tS("记录收支或转账", "Record income, expense or transfer"), systemImage: "square.and.pencil") }
+                        Button(action: presentNewLedgerEntry) { Label(tS("记录收支或转账", "Record income, expense or transfer"), systemImage: "square.and.pencil") }
                         Button { showingRecordEditor = true } label: { Label(tS("分配一笔积蓄", "Allocate savings"), systemImage: "target") }
                             .disabled(store.activeGoals.isEmpty)
                     } label: { Label(tS("更多记录", "More"), systemImage: "plus.circle") }
@@ -100,8 +98,9 @@ struct ContentView: View {
                 .environmentObject(store)
                 .environmentObject(settings)
         }
-        .sheet(isPresented: $showingLedgerEditor) {
-            LedgerEntryEditorView(existingEntry: nil)
+        .sheet(item: $ledgerEditorSession) { session in
+            LedgerEntryEditorView(existingEntry: session.entry)
+                .id(session.id)
                 .environmentObject(store)
         }
         .sheet(item: $csvImportContext) { context in
@@ -136,7 +135,7 @@ struct ContentView: View {
                     "The backup “\(restoreCandidateURL?.lastPathComponent ?? "")” will replace all current data — transactions, accounts, goals and adventure progress. This cannot be undone; consider exporting a current backup first."))
         }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuNewLedgerEntry)) { _ in
-            showingLedgerEditor = true
+            presentNewLedgerEntry()
         }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuNewSavingsRecord)) { _ in
             guard !store.activeGoals.isEmpty else {
@@ -453,6 +452,11 @@ struct ContentView: View {
     /// 由数据层原子发布并保留失败重试，不能先删除最后有效快照。
     private func syncWidgetSnapshotCurrency() {
         store.setWidgetCurrency(settings.defaultCurrency.rawValue)
+    }
+
+    private func presentNewLedgerEntry() {
+        guard ledgerEditorSession == nil else { return }
+        ledgerEditorSession = .init(entry: nil)
     }
 }
 
