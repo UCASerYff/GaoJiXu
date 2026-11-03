@@ -38,6 +38,7 @@ struct ContentView: View {
     @State private var ledgerEditorSession: LedgerEditorSession?
     @State private var restoreCandidateURL: URL?
     @State private var csvImportContext: CSVImportContext?
+    @State private var researchFundingRecordID: String?
     /// 订阅 app 级语言键：值变化时整个模块重渲染（.id 见 body）。
     @AppStorage(GQNSLanguage.key) private var appLanguage = "system"
 
@@ -148,12 +149,8 @@ struct ContentView: View {
         // 联动①：月供扣款自动记账（静默写入，防重与写入细节见 store.recordAutoLedgerEntry）。
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("gaojixu.autoLedgerEntry"))) { note in
             guard let info = note.userInfo,
-                  let paymentID = info["paymentID"] as? String,
-                  let title = info["title"] as? String,
-                  let amount = info["amount"] as? Double,
-                  let currency = info["currency"] as? String,
-                  let date = info["date"] as? Date else { return }
-            store.recordAutoLedgerEntry(paymentID: paymentID, title: title, amount: amount, currency: currency, date: date)
+                  let paymentID = info["paymentID"] as? String else { return }
+            PendingAutoLedger.recordConfirmed(paymentID, store: store)
         }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuExportBackup)) { _ in
             exportBackup()
@@ -204,6 +201,13 @@ struct ContentView: View {
         case "ledger": selection = .ledger
         case "overview": selection = .overview
         case "budgets": selection = .budgets
+        case "fixed-income": selection = .fixedIncome
+        case "fixed-expenses", "today": selection = .fixedExpenses
+        case "benefits": selection = .benefits
+        case "research-funding":
+            let values = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            researchFundingRecordID = values.first(where: { $0.name == "id" || $0.name == "sourceID" })?.value
+            selection = .researchFunding
         default: break
         }
     }
@@ -216,6 +220,8 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     sidebarSection(tS("财务管理", "Finance"), sections: [.overview, .ledger, .accounts, .budgets, .reports])
+                    sidebarSection(tS("固定收支与权益", "Recurring finances"), sections: [.fixedIncome, .fixedExpenses, .benefits])
+                    sidebarSection(tS("科研资金", "Research funding"), sections: [.researchFunding])
                     sidebarSection(tS("积蓄计划", "Savings Plan"), sections: [.goals, .records, .analytics])
                     sidebarSection(tS("冒险成长", "Adventure"), sections: [.adventure])
                 }
@@ -361,6 +367,10 @@ struct ContentView: View {
         case .goals: GoalsView()
         case .records: RecordsView()
         case .analytics: AnalyticsView()
+        case .fixedIncome: FixedIncomeView()
+        case .fixedExpenses: FixedExpenseView()
+        case .benefits: MonthlyBenefitsView()
+        case .researchFunding: ResearchFundingView(recordID: researchFundingRecordID)
         case .adventure: AdventureHubView()
         }
     }

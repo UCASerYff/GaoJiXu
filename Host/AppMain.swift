@@ -71,7 +71,12 @@ final class AppDelegate:NSObject,NSApplicationDelegate,UNUserNotificationCenterD
     }
     func userNotificationCenter(_ center:UNUserNotificationCenter,willPresent notification:UNNotification,withCompletionHandler completionHandler:@escaping(UNNotificationPresentationOptions)->Void) { completionHandler([.banner,.list,.sound]) }
     func userNotificationCenter(_ center:UNUserNotificationCenter,didReceive response:UNNotificationResponse,withCompletionHandler completionHandler:@escaping()->Void) {
-        DispatchQueue.main.async { post("Standalone.showWindow");completionHandler() }
+        let monthly = response.notification.request.content.userInfo["module"] as? String == "monthly"
+        DispatchQueue.main.async {
+            post("Standalone.showWindow")
+            if monthly { NotificationCenter.default.post(name: Notification.Name("gaojixu.selectSection"), object: nil, userInfo: ["section": "fixedExpenses"]) }
+            completionHandler()
+        }
     }
 }
 private struct WindowToolbarOpaqueBackground:ViewModifier {

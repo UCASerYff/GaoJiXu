@@ -1,0 +1,121 @@
+{
+  "version": 32,
+  "papers": [],
+  "portals": [],
+  "existingWorks": [],
+  "projects": [
+    {
+      "id": "10000000-0000-4000-8000-000000000020",
+      "title": "合成同名资金项目",
+      "content": "纯测试项目。与两个资金项同名，但当前来源没有关联外键。",
+      "steps": [],
+      "createdAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-02-04T00:00:00Z"
+    }
+  ],
+  "certificates": [
+    {
+      "id": "10000000-0000-4000-8000-000000000021",
+      "name": "与资金无关的合成证书",
+      "eventDate": "2026-01-01T00:00:00Z",
+      "tags": [],
+      "attachments": [],
+      "createdAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-02-04T00:00:00Z"
+    }
+  ],
+  "fundingRecords": [
+    {
+      "id": "10000000-0000-4000-8000-000000000001",
+      "name": "合成同名资金项目",
+      "amount": 120.125,
+      "year": 2026,
+      "months": [
+        1,
+        3
+      ],
+      "receivingAccount": "合成收款标签（不是个人账户 ID）",
+      "createdAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-02-04T00:00:00Z"
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000002",
+      "name": "合成同名资金项目",
+      "amount": 6.25,
+      "year": 2026,
+      "months": [
+        3,
+        12
+      ],
+      "receivingAccount": "合成收款标签（不是个人账户 ID）",
+      "createdAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-02-04T00:00:00Z"
+    }
+  ],
+  "documentFolders": [],
+  "managedDocuments": [],
+  "trashItems": [
+    {
+      "id": "10000000-0000-4000-8000-000000000022",
+      "kind": "project",
+      "title": "合成历史项目",
+      "deletedAt": "2026-02-04T00:00:00Z",
+      "project": {
+        "id": "10000000-0000-4000-8000-000000000023",
+        "title": "合成历史项目",
+        "content": "纯测试项目。与两个资金项同名，但当前来源没有关联外键。",
+        "steps": [],
+        "createdAt": "2026-01-01T00:00:00Z",
+        "updatedAt": "2026-02-04T00:00:00Z"
+      },
+      "documents": []
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000010",
+      "kind": "funding",
+      "title": "合成同名资金项目",
+      "deletedAt": "2026-02-06T00:00:00Z",
+      "funding": {
+        "id": "10000000-0000-4000-8000-000000000003",
+        "name": "合成同名资金项目",
+        "amount": 99,
+        "year": 2026,
+        "months": [
+          3
+        ],
+        "receivingAccount": "合成收款标签（不是个人账户 ID）",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "updatedAt": "2026-02-04T00:00:00Z"
+      },
+      "documents": []
+    }
+  ],
+  "rewardCity": {
+    "coins": 123,
+    "buildingTickets": 2,
+    "decorationTickets": 4,
+    "unlockedPlotIDs": [
+      "2:2",
+      "2:3",
+      "2:4",
+      "3:2",
+      "3:3",
+      "3:4",
+      "4:2",
+      "4:3",
+      "4:4"
+    ],
+    "inventory": [],
+    "placements": [],
+    "terrainInventory": [],
+    "plotTerrains": {},
+    "rewardedWorkIDs": [],
+    "rewardedCertificateIDs": [
+      "10000000-0000-4000-8000-000000000021"
+    ],
+    "buildingPity": 0,
+    "decorationPity": 0,
+    "lastCoinCollectionAt": "2026-01-01T00:00:00Z",
+    "highestZIndex": 0
+  }
+}

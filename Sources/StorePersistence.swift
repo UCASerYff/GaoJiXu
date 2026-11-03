@@ -34,6 +34,7 @@ extension SavingsStore {
     func restore(from data: Data) throws {
         let decoded = try decoder.decode(SavingsLibrary.self, from: data)
         guard decoded.version <= Self.currentSchemaVersion else { throw SavingsStoreError.unsupportedVersion }
+        try validateFixedIncomeLibrary(decoded)
         setLoadFailed(false)
         apply(decoded)
         if persistedFinancialFingerprint == nil {
@@ -128,6 +129,7 @@ extension SavingsStore {
             }
             let decoded = try decoder.decode(SavingsLibrary.self, from: Data(contentsOf: libraryURL))
             guard decoded.version <= Self.currentSchemaVersion else { throw SavingsStoreError.unsupportedVersion }
+            try validateFixedIncomeLibrary(decoded)
             apply(decoded)
             // Legacy libraries have no reliable financial modification time. Do not invent one.
             financialRevision = try financialFingerprint()
@@ -175,6 +177,13 @@ extension SavingsStore {
         let backupURL = libraryDirectory.appendingPathComponent("library.migration-backup-v\(version).json")
         guard !fileManager.fileExists(atPath: backupURL.path) else { return }
         try? fileManager.copyItem(at: libraryURL, to: backupURL)
+    }
+
+    private func validateFixedIncomeLibrary(_ library: SavingsLibrary) throws {
+        let plans = library.fixedIncomePlans ?? [], receipts = library.fixedIncomeReceipts ?? []
+        guard Set(plans.map(\.id)).count == plans.count, Set(receipts.map(\.id)).count == receipts.count else {
+            throw NSError(domain: "GaoJiXu.FixedIncome", code: 1, userInfo: [NSLocalizedDescriptionKey: "固定收入计划或回执重复，保留原资料并停止写入。"])
+        }
     }
 
     private static func isMissingFile(_ error: Error) -> Bool {

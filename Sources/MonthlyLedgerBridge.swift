@@ -28,7 +28,7 @@ extension SavingsStore {
             let bindingKey="gqns.monthly.account." + String(p.id.split(separator:"|").first ?? "")
             if let existing = ledgerEntries.first(where: { $0.id == "auto-monthly|" + p.id }),
                monthlyAccountBinding(bindingKey)==existing.accountID,
-               existing.amount == p.amount, existing.date == p.date, existing.note == "月供·" + p.title,
+               existing.amountValue == MoneyValue.normalize(p.amount), existing.date == p.date, existing.note == "月供·" + p.title,
                accounts.contains(where: { $0.id == existing.accountID && $0.currency.rawValue == p.currency }) {
                 results[p.id] = flushSave() ? "done" : "pending"
                 continue

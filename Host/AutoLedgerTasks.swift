@@ -40,10 +40,23 @@ enum AutoLedgerTasks {
     /// done 历史只保留最近 200 条，pending/failed 永远不自动清。
     private static let maxDone = 200
 
-    static func load() -> [AutoLedgerTask] {
-        guard let data = try? Data(contentsOf: fileURL) else { return [] }
+    static func loadChecked(expectExisting: Bool = false) throws -> [AutoLedgerTask] {
+        do { _ = try FileManager.default.attributesOfItem(atPath: fileURL.path) }
+        catch let e as NSError where e.domain == NSCocoaErrorDomain && (e.code == NSFileNoSuchFileError || e.code == NSFileReadNoSuchFileError) {
+            guard !expectExisting else { throw NSError(domain: "GaoJiXu.MonthlyTasks", code: 1, userInfo: [NSLocalizedDescriptionKey: "已有月供记账记录，但核对任务表缺失，自动对账已暂停。请检查备份。"] ) }
+            return []
+        }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([AutoLedgerTask].self, from: data)) ?? []
+        let tasks = try decoder.decode([AutoLedgerTask].self, from: Data(contentsOf: fileURL))
+        guard Set(tasks.map(\.id)).count == tasks.count,
+              tasks.allSatisfy({ !$0.id.isEmpty && $0.amount.isFinite && $0.amount > 0 && !$0.currency.isEmpty && $0.date.timeIntervalSince1970.isFinite }) else { throw CocoaError(.fileReadCorruptFile) }
+        return tasks
+    }
+    static func load() -> [AutoLedgerTask] {
+        do { return try loadChecked() } catch {
+            NotificationCenter.default.post(name: Notification.Name("GaoSeries.dataError"), object: nil, userInfo: ["message": "月供核对任务无法读取，原文件已保留。" + error.localizedDescription])
+            return [] // Legacy read-only callers; reconciliation uses loadChecked and never treats this as authority.
+        }
     }
 
     static func save(_ tasks: [AutoLedgerTask]) {
@@ -53,10 +66,7 @@ enum AutoLedgerTasks {
     }
     static func saveChecked(_ tasks: [AutoLedgerTask]) throws {
         // Refuse to replace an unreadable existing task file.
-        if FileManager.default.fileExists(atPath:fileURL.path) {
-            let decoder=JSONDecoder();decoder.dateDecodingStrategy = .iso8601
-            _ = try decoder.decode([AutoLedgerTask].self,from:Data(contentsOf:fileURL))
-        }
+        _ = try loadChecked()
         let encoder=JSONEncoder();encoder.dateEncodingStrategy = .iso8601
         try FileManager.default.createDirectory(at:fileURL.deletingLastPathComponent(),withIntermediateDirectories:true)
         try encoder.encode(tasks).write(to:fileURL,options:.atomic)

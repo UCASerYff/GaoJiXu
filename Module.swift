@@ -82,8 +82,22 @@ public struct SavingsSettingsView: View {
 }
 
 @MainActor public enum SavingsModuleRuntime {
-    public static func start() { SavingsRuntime.start() }
+    public static func start() { SavingsRuntime.start(); MonthlyFinanceStore.shared.reload() }
     public static func flush() -> Bool { SavingsRuntime.store.flushSave() }
+    /// Only the migrated, activated receiver database is read; unavailable is never an empty payment list.
+    public static func hasMonthlyReconciliationHistory() -> Bool {
+        SavingsRuntime.store.ledgerEntries.contains { $0.id.hasPrefix("auto-monthly|") }
+        || FileManager.default.fileExists(atPath: SavingsRuntime.store.libraryDirectory.appendingPathComponent("monthly-account-bindings.json").path)
+    }
+    nonisolated public static func integratedMonthlyPayments() throws -> Data {
+        let state = try MonthlyFinanceDatabase(directory: MonthlyFinanceDatabase.location()).read()
+        let names = Dictionary(uniqueKeysWithValues: state.subscriptions.map { ($0.id, $0.name) })
+        let payments = state.payments.filter { !$0.skipped && $0.amount > 0 }.map {
+            ConfirmedMonthlyPayment(id: $0.id, title: names[$0.subscriptionID] ?? "已确认支付",
+                                    amount: MoneyValue.double($0.amount), currency: $0.currency, date: $0.paidAt)
+        }
+        return try JSONEncoder().encode(payments)
+    }
     public static func reconcileMonthly(_ data: Data, ignored: Set<String> = []) throws -> [String:String] {
         try SavingsRuntime.store.reconcileMonthly(JSONDecoder().decode([ConfirmedMonthlyPayment].self,from:data), ignored:ignored)
     }

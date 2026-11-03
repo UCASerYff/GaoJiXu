@@ -6,6 +6,7 @@ import SwiftUI
 enum SavingsSection: String, CaseIterable, Identifiable {
     case overview, ledger, accounts, budgets, reports
     case goals, records, analytics
+    case fixedIncome, fixedExpenses, benefits, researchFunding
     case adventure
 
     var id: String { rawValue }
@@ -19,6 +20,10 @@ enum SavingsSection: String, CaseIterable, Identifiable {
         case .goals: tS("攒钱目标", "Goals")
         case .records: tS("积蓄记录", "Records")
         case .analytics: tS("积蓄趋势", "Trends")
+        case .fixedIncome: tS("固定收入", "Fixed income")
+        case .fixedExpenses: tS("固定支出", "Fixed expenses")
+        case .benefits: tS("权益管理", "Benefits")
+        case .researchFunding: tS("科研资金", "Research funding")
         case .adventure: tS("冒险成长", "Adventure")
         }
     }
@@ -32,6 +37,10 @@ enum SavingsSection: String, CaseIterable, Identifiable {
         case .goals: tS("把账户中的钱分配给真正想实现的目标", "Allocate money toward the goals that matter")
         case .records: tS("每笔积蓄同步记为账户转账，不计入日常收支", "Each saving is a transfer, excluded from daily cash flow")
         case .analytics: tS("回看积蓄节奏，估算目标完成时间", "Review your pace and estimate goal completion")
+        case .fixedIncome: tS("配置月度收入计划，确认实际到账后记账", "Plan monthly income; record only confirmed receipts")
+        case .fixedExpenses: tS("订阅、账单、支付历史与提醒", "Subscriptions, bills, payments and reminders")
+        case .benefits: tS("独立权益与周期打卡", "Benefits and periodic claims")
+        case .researchFunding: tS("单独管理科研资助计划，不并入个人净资产", "Research funding plans kept separate from personal net worth")
         case .adventure: tS("战斗、装备、技能、宠物、祈愿与成就，全部免费游玩", "Battles, gear, techniques, pets, wishes and achievements — all free")
         }
     }
@@ -45,6 +54,10 @@ enum SavingsSection: String, CaseIterable, Identifiable {
         case .goals: "target"
         case .records: "list.bullet.rectangle.portrait.fill"
         case .analytics: "chart.xyaxis.line"
+        case .fixedIncome: "arrow.down.circle.fill"
+        case .fixedExpenses: "calendar.badge.clock"
+        case .benefits: "gift.fill"
+        case .researchFunding: "building.columns.fill"
         case .adventure: "map.fill"
         }
     }
@@ -1050,6 +1063,8 @@ struct SavingsLibrary: Codable {
     var equippedPetIDs: [String]? = nil
     /// 周期自动记账规则（V2.3 新增）。旧档缺失时按空数组处理。
     var recurringRules: [RecurringRule]? = nil
+    var fixedIncomePlans: [FixedIncomePlan]? = nil
+    var fixedIncomeReceipts: [FixedIncomeReceipt]? = nil
 }
 
 struct BattleOutcome: Identifiable {

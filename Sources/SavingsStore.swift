@@ -17,7 +17,8 @@ import WidgetKit
 final class SavingsStore: ObservableObject {
     /// 存档 schema 版本。V23：财务金额 Decimal 化（JSON 仍为 Double 字面量，结构兼容）、
     /// 新增周期自动记账规则与积蓄记录冗余币种；迁移见 apply() 的 v22→v23 段。
-    static let currentSchemaVersion = 23
+    /// V24：增加固定收入计划和确认回执，防止旧版保存时丢弃这些字段。
+    static let currentSchemaVersion = 24
     static let maximumTechniqueSlots = 12
     static let maximumPetSlots = GameProgression.maximumEquippedPets
     @Published var goals: [SavingsGoal] = []
@@ -27,6 +28,8 @@ final class SavingsStore: ObservableObject {
     @Published var budgets: [BudgetPlan] = []
     /// 周期自动记账规则（V2.3 新增）。
     @Published var recurringRules: [RecurringRule] = []
+    @Published var fixedIncomePlans: [FixedIncomePlan] = []
+    @Published var fixedIncomeReceipts: [FixedIncomeReceipt] = []
     @Published var adventure = AdventureState(
         level: 1, experience: 0, stardust: 0, tickets: 10, insight: 0,
         monsterIndex: 0, monsterHP: 100, defeatedMonsters: 0, pityCount: 0,
@@ -107,7 +110,7 @@ final class SavingsStore: ObservableObject {
     func snapshot() -> SavingsLibrary {
         .init(lastLedgerAccountID: lastLedgerAccountID, financialRevision: financialRevision, financialUpdatedAt: financialUpdatedAt, version: Self.currentSchemaVersion, goals: goals, records: records, adventure: adventure, equipment: equipment, techniques: techniques,
               rewardEvents: rewardEvents, drawHistory: drawHistory, accounts: accounts, ledgerEntries: ledgerEntries, budgets: budgets,
-              pets: pets, equippedPetIDs: equippedPetIDs, recurringRules: recurringRules)
+              pets: pets, equippedPetIDs: equippedPetIDs, recurringRules: recurringRules, fixedIncomePlans: fixedIncomePlans, fixedIncomeReceipts: fixedIncomeReceipts)
     }
 
     func apply(_ library: SavingsLibrary) {
@@ -117,6 +120,8 @@ final class SavingsStore: ObservableObject {
         goals = library.goals; records = library.records.sorted { $0.date > $1.date }
         accounts = library.accounts ?? Self.starterAccounts(); ledgerEntries = (library.ledgerEntries ?? []).sorted { $0.date > $1.date }; budgets = library.budgets ?? []
         recurringRules = library.recurringRules ?? []
+        fixedIncomePlans = library.fixedIncomePlans ?? []
+        fixedIncomeReceipts = library.fixedIncomeReceipts ?? []
         adventure = library.adventure
         adventure.lastBattleMessage = adventure.lastBattleMessage.map(normalizeSkillWording)
         equipment = library.equipment.map {

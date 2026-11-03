@@ -16,6 +16,21 @@ struct PendingAutoLedgerTask: Codable, Identifiable {
 }
 
 enum PendingAutoLedger {
+    /// Cached reconciliation tasks are only a presentation. Read the activated business authority
+    /// again before a manual request, so withdrawn/corrected payments cannot be replayed.
+    @MainActor @discardableResult static func recordConfirmed(_ id: String, accountOverride: String? = nil, store: SavingsStore) -> SavingsStore.AutoLedgerOutcome {
+        do {
+            let state = try MonthlyFinanceDatabase(directory: MonthlyFinanceDatabase.location()).read()
+            guard let payment = state.payments.first(where: { $0.id == id && !$0.skipped && $0.amount > 0 }) else {
+                throw MonthlyFinanceError("原支付已撤回或变更，请刷新核对记录。")
+            }
+            let title = state.subscriptions.first(where: { $0.id == payment.subscriptionID })?.name ?? "已确认支付"
+            return store.recordAutoLedgerEntry(paymentID: id, title: title, amount: MoneyValue.double(payment.amount), currency: payment.currency, date: payment.paidAt, accountOverride: accountOverride)
+        } catch {
+            store.notice = "月供记账未完成：" + error.localizedDescription
+            return .invalid
+        }
+    }
     static var fileURL: URL {
         // 与主 app AutoLedgerTasks 同一文件；测试可用同一环境变量隔离。
         if let override = ProcessInfo.processInfo.environment["GQNS_AUTOLEDGER_TASKS_FILE"] {
@@ -125,8 +140,7 @@ struct PendingAutoLedgerBanner: View {
 
     private func record(_ task: PendingAutoLedgerTask) {
         guard let accountID = chosenAccount[task.id], !accountID.isEmpty else { return }
-        let outcome = store.recordAutoLedgerEntry(paymentID: task.id, title: task.title, amount: task.amount,
-                                                  currency: task.currency, date: task.date, accountOverride: accountID)
+        let outcome = PendingAutoLedger.recordConfirmed(task.id, accountOverride: accountID, store: store)
         // recorded/duplicate 的回执会让主 app 标 done；这里同步更新本地文件让横幅立即消失。
         if outcome == .recorded || outcome == .duplicate {
             PendingAutoLedger.markDone(task.id)

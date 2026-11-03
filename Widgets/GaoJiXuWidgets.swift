@@ -306,5 +306,7 @@ struct GaoJiXuWidgets: WidgetBundle {
     var body: some Widget {
         MonthlyFinanceCalendarWidget()
         NetWorthWidget()
+        SavingsFixedExpenseWidget()
+        SavingsMonthlyBenefitsWidget()
     }
 }
