@@ -35,8 +35,23 @@ def test_workspace_navigation() -> None:
     require("sidebar" not in content.lower(), "旧侧栏仍残留")
 
 
+def test_visual_system() -> None:
+    theme = text("Sources/AppTheme.swift")
+    components = text("Sources/WorkbenchComponents.swift")
+    accounting = text("Sources/AccountingViews.swift")
+    navigation = text("Sources/WorkspaceNavigation.swift")
+    require("static let accent" in theme, "缺少墨绿主色")
+    require("static func canvas" in theme, "缺少动态画布色")
+    for symbol in ("WorkbenchPageHeader", "WorkbenchCard", "WorkbenchStatusPill", "WorkbenchEditorScaffold"):
+        require(f"struct {symbol}" in components, f"缺少统一组件 {symbol}")
+    require("WorkbenchPageHeader" in accounting, "总览未使用统一标题")
+    require("SavingsTheme.accent" in navigation, "顶部导航未使用新主色")
+    require('Text(section.title).font(.pixel' not in theme, "财务标题仍使用像素字体")
+
+
 def main() -> None:
     test_workspace_navigation()
+    test_visual_system()
     print("Workbench structure regression: PASS")
 
 

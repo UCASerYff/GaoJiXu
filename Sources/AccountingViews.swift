@@ -13,17 +13,17 @@ struct FinancialOverviewView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                // P0-2：月供自动记账待处理项（无匹配币种账户时在此由用户选账户入账）。
-                PendingAutoLedgerBanner()
-                HStack {
+                WorkbenchPageHeader(
+                    title: tS("财务总览", "Financial overview"),
+                    subtitle: tS("看清今天的资产，也安排好下一个月。", "A clear view of today, with next month under control.")
+                ) {
                     Picker("统计币种", selection: $currency) {
-                        ForEach(SavingsCurrency.allCases) { value in Text(value.displayName).tag(value) }
+                        ForEach(SavingsCurrency.allCases) { value in Text(value.rawValue).tag(value) }
                     }
-                    .frame(width: 220)
-                    Spacer()
-                    Text("不同币种不按未知汇率合并，保证统计真实。")
-                        .font(.caption).foregroundStyle(.secondary)
+                    .labelsHidden()
+                    .frame(width: 92)
                 }
+                PendingAutoLedgerBanner()
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 14)], spacing: 14) {
                     SavingsStatTile(value: SavingsFormatters.money(store.netWorth(currency: currency), currency: currency), label: "净资产", symbol: "building.columns.fill", color: SavingsTheme.blue)

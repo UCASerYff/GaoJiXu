@@ -91,11 +91,10 @@ final class SavingsSettings: ObservableObject {
     func resetBackgroundColor() { backgroundHex = "" }
 
     func canvasColor(for scheme: ColorScheme) -> Color {
-        let base = scheme == .dark
-            ? NSColor(srgbRed: 0.055, green: 0.065, blue: 0.085, alpha: 1)
-            : NSColor(srgbRed: 0.975, green: 0.982, blue: 0.985, alpha: 1)
-        guard let selected = NSColor(savingsHex: backgroundHex) else { return Color(nsColor: base) }
-        return Color(nsColor: base.blended(withFraction: 0.24, of: selected) ?? base)
+        let baseColor = SavingsTheme.canvas(for: scheme)
+        guard let selected = NSColor(savingsHex: backgroundHex),
+              let base = NSColor(baseColor).usingColorSpace(.sRGB) else { return baseColor }
+        return Color(nsColor: base.blended(withFraction: 0.16, of: selected) ?? base)
     }
 }
 
@@ -120,13 +119,36 @@ private extension Color {
 }
 
 enum SavingsTheme {
-    static let blue = Color(red: 0.18, green: 0.43, blue: 0.82)
-    static let teal = Color(red: 0.12, green: 0.61, blue: 0.51)
-    static let green = Color(red: 0.25, green: 0.65, blue: 0.35)
-    static let orange = Color(red: 0.94, green: 0.55, blue: 0.18)
-    static let purple = Color(red: 0.49, green: 0.36, blue: 0.82)
-    static let red = Color(red: 0.82, green: 0.26, blue: 0.30)
-    static let panel = Color(nsColor: .controlBackgroundColor)
+    private static func dynamic(light: NSColor, dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        })
+    }
+
+    static let accent = dynamic(
+        light: NSColor(srgbRed: 0.12, green: 0.34, blue: 0.28, alpha: 1),
+        dark: NSColor(srgbRed: 0.35, green: 0.72, blue: 0.60, alpha: 1)
+    )
+    static let blue = Color(red: 0.22, green: 0.43, blue: 0.48)
+    static let teal = Color(red: 0.15, green: 0.55, blue: 0.43)
+    static let green = Color(red: 0.24, green: 0.57, blue: 0.35)
+    static let orange = Color(red: 0.88, green: 0.48, blue: 0.22)
+    static let purple = Color(red: 0.49, green: 0.40, blue: 0.67)
+    static let red = Color(red: 0.79, green: 0.29, blue: 0.27)
+    static let panel = dynamic(
+        light: NSColor(srgbRed: 1.0, green: 0.995, blue: 0.975, alpha: 1),
+        dark: NSColor(srgbRed: 0.105, green: 0.135, blue: 0.125, alpha: 1)
+    )
+    static let editorCanvas = dynamic(
+        light: NSColor(srgbRed: 0.975, green: 0.968, blue: 0.942, alpha: 1),
+        dark: NSColor(srgbRed: 0.065, green: 0.085, blue: 0.078, alpha: 1)
+    )
+
+    static func canvas(for scheme: ColorScheme) -> Color {
+        scheme == .dark
+            ? Color(red: 0.055, green: 0.074, blue: 0.067)
+            : Color(red: 0.965, green: 0.953, blue: 0.917)
+    }
 
     static func goalColor(_ key: String) -> Color {
         switch key {
@@ -147,11 +169,11 @@ struct SavingsSectionHeader: View {
         HStack(spacing: 12) {
             Image(systemName: section.symbol)
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(SavingsTheme.blue)
+                .foregroundStyle(SavingsTheme.accent)
                 .frame(width: 36, height: 36)
-                .background(SavingsTheme.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
+                .background(SavingsTheme.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
             VStack(alignment: .leading, spacing: 1) {
-                Text(section.title).font(.pixel(17, weight: .semibold))
+                Text(section.title).font(.system(size: 20, weight: .bold, design: .rounded))
                 Text(section.subtitle).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
@@ -166,23 +188,23 @@ struct SavingsStatTile: View {
     let value: String
     let label: String
     let symbol: String
-    var color: Color = SavingsTheme.blue
+    var color: Color = SavingsTheme.accent
 
     var body: some View {
         HStack(spacing: 13) {
             Image(systemName: symbol)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(color)
-                .frame(width: 38, height: 38)
-                .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(value).font(.title3.weight(.semibold)).monospacedDigit().lineLimit(1)
+                .frame(width: 42, height: 42)
+                .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(value).font(.title3.weight(.bold)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
                 Text(label).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
-        .padding(14)
-        .savingsPanel()
+        .padding(16)
+        .savingsPanel(cornerRadius: 16)
     }
 }
 
@@ -203,8 +225,9 @@ struct PixelBadge: View {
 }
 
 extension View {
-    func savingsPanel(cornerRadius: CGFloat = 12) -> some View {
-        background(SavingsTheme.panel, in: RoundedRectangle(cornerRadius: cornerRadius))
-            .overlay(RoundedRectangle(cornerRadius: cornerRadius).stroke(Color.primary.opacity(0.075)))
+    func savingsPanel(cornerRadius: CGFloat = 16) -> some View {
+        background(SavingsTheme.panel, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).stroke(Color.primary.opacity(0.065)))
+            .shadow(color: .black.opacity(0.035), radius: 10, y: 4)
     }
 }

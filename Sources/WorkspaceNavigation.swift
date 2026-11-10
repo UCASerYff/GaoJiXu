@@ -115,8 +115,8 @@ struct WorkbenchTopNavigation: View {
                             .background {
                                 if selected {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(SavingsTheme.teal.gradient)
-                                        .shadow(color: SavingsTheme.teal.opacity(0.22), radius: 8, y: 3)
+                                        .fill(SavingsTheme.accent.gradient)
+                                        .shadow(color: SavingsTheme.accent.opacity(0.22), radius: 8, y: 3)
                                 } else if hovered == item {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.055))
                                 }
