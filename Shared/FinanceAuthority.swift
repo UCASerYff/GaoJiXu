@@ -23,7 +23,8 @@ struct FinanceCommitMarker: Codable, Equatable {
 }
 enum FinanceAuthority {
   static let owner = "com.gaojixu.savings"
-  static let modules: Set<String> = ["monthly", "research-funding"]
+  static let modules: Set<String> = ["monthly"]
+  private static let legacyCommittedModules: Set<String> = ["monthly", "research-funding"]
   static func failure(_ message: String) -> NSError {
     NSError(
       domain: "GaoJiXu.FinanceAuthority", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
@@ -50,14 +51,12 @@ enum FinanceAuthority {
       !receipt.transactionID.isEmpty, receipt.activatedAt.timeIntervalSince1970.isFinite
     else { throw failure("金融资料尚未完成安全切换，已暂停写入。") }
     if receipt.mode == "migrated" {
-      let expected =
-        module == "monthly" ? "com.gaoseries.GaoYueGong" : "com.academic-achievement.manager"
-      guard receipt.sourceFrozen, receipt.sourceBundleID == expected,
+      guard receipt.sourceFrozen, receipt.sourceBundleID == "com.gaoseries.GaoYueGong",
         let revision = receipt.sourceRevision,
         revision.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
         let path = receipt.commitMarkerPath, let expectedModules = receipt.expectedModules,
-        Set(expectedModules).count == expectedModules.count, expectedModules.contains(module),
-        Set(expectedModules).isSubset(of: modules)
+        Set(expectedModules).count == expectedModules.count, expectedModules.contains("monthly"),
+        Set(expectedModules).isSubset(of: legacyCommittedModules)
       else { throw failure("来源尚未冻结或迁移未完成，保留原资料并暂停写入。") }
       if isProductionDirectory(directory) {
         try validateProductionReference(path, transactionID: receipt.transactionID)
@@ -88,22 +87,13 @@ enum FinanceAuthority {
   static var productionGroup: URL {
     userHome.appendingPathComponent("Library/Group Containers/" + groupID, isDirectory: true)
   }
-  static var productionResearchDirectory: URL {
-    userHome.appendingPathComponent(
-      "Library/Application Support/GaoSeries/Savings/ResearchFunding", isDirectory: true)
-  }
   private static func normalized(_ u: URL) -> String {
     u.standardizedFileURL.path.precomposedStringWithCanonicalMapping.lowercased()
   }
   static func isProductionDirectory(_ u: URL) -> Bool {
     let destination = normalized(u)
     let group = normalized(productionGroup)
-    let localSupport = FileManager.default.urls(
-      for: .applicationSupportDirectory, in: .userDomainMask
-    ).first?.appendingPathComponent("GaoSeries/Savings/ResearchFunding")
     return destination == group || destination.hasPrefix(group + "/")
-      || destination == normalized(productionResearchDirectory)
-      || localSupport.map { destination == normalized($0) } == true
   }
   private static func groupReference(_ txn: String) -> String {
     "app-group:IntegratedFinance/Migrations/" + txn + "/committed.json"

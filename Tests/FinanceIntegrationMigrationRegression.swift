@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// Real, temporary SQLite and JSON fixtures; no host/WidgetKit, live data or discovery. Run as a separate @main.
+/// Real, temporary SQLite fixtures; no host/WidgetKit, live data or discovery. Run as a separate @main.
 @main private struct FinanceIntegrationMigrationRegression {
   typealias Migration = FinanceIntegrationMigration
   struct TestError: Error {
@@ -35,7 +35,6 @@ import Foundation
     let source = root.appendingPathComponent("frozen")
     try fm.createDirectory(at: source, withIntermediateDirectories: false)
     let monthly = source.appendingPathComponent("monthly.sqlite")
-    let pack = source.appendingPathComponent("research.json")
     var sub = MonthlyFinanceSubscription()
     sub.name = "Synthetic subscription"
     sub.plans[0].price = 12
@@ -54,56 +53,34 @@ import Foundation
       try c.exec("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),json BLOB NOT NULL)")
       try c.updatePayload(payload, initial: true)
     }
-    let base = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent(
-      "Fixtures/ResearchFunding/research-funding-v1.json")
-    var research = try JSONSerialization.jsonObject(with: Data(contentsOf: base)) as! [String: Any]
-    let active = (research["fundingRecords"] as! [[String: Any]])[0]["id"] as! String
-    let rev = research["sourceRevision"] as! String
-    let attachment = Data("synthetic private attachment".utf8)
-    let assets = source.appendingPathComponent("proofs")
-    try fm.createDirectory(at: assets, withIntermediateDirectories: false)
-    let at = assets.appendingPathComponent("unit.txt")
-    try attachment.write(to: at)
-    research["attachments"] = [
-      [
-        "id": "unit-asset", "fundingID": active, "relativePath": "proofs/unit.txt",
-        "byteCount": attachment.count, "sha256": sha(attachment),
-      ]
-    ]
-    let bundle = try JSONSerialization.data(withJSONObject: research, options: .sortedKeys)
-    try bundle.write(to: pack)
-    let sqliteHash = sha(try Data(contentsOf: monthly))
+    let sqliteBytes = try Data(contentsOf: monthly)
+    let sqliteHash = sha(sqliteBytes)
     let inp = Migration.MonthlyInput(
       snapshotPath: monthly.path, artifactSHA256: sqliteHash, sourceRevision: sha(payload))
-    let rin = Migration.ResearchInput(
-      packagePath: pack.path, artifactSHA256: sha(bundle), sourceRevision: rev)
     func request(
-      _ label: String, _ tx: String = UUID().uuidString, _ research: Migration.ResearchInput? = nil,
-      frozen: Bool = true
+      _ label: String, _ tx: String = UUID().uuidString, frozen: Bool = true,
+      input: Migration.MonthlyInput? = nil
     ) -> Migration.Request {
       let dir = root.appendingPathComponent(label)
       return .init(
         schemaVersion: 1, txnID: tx, writersFrozen: frozen, targetWritersStopped: true,
-        monthly: inp, research: research ?? rin,
+        monthly: input ?? inp,
         targetMonthlyDirectory: dir.appendingPathComponent("group/Monthly").path,
-        targetResearchDirectory: dir.appendingPathComponent("support/Funding").path,
         journalDirectory: dir.appendingPathComponent("private/journal").path,
         commitMarkerPath: dir.appendingPathComponent("group/Migrations/" + tx + "/committed.json")
           .path)
     }
     let r = request("cutover")
     let m = URL(fileURLWithPath: r.targetMonthlyDirectory)
-    let f = URL(fileURLWithPath: r.targetResearchDirectory)
     let marker = URL(fileURLWithPath: r.commitMarkerPath)
     let journal = URL(fileURLWithPath: r.journalDirectory)
     // Path gate only; these assertions never open or create a real production directory.
     let liveMonthly = FinanceAuthority.productionGroup.appendingPathComponent(
       "IntegratedFinance/Monthly")
-    let liveResearch = FinanceAuthority.productionResearchDirectory
     let canonicalMarker = FinanceAuthority.productionGroup.appendingPathComponent(
       "IntegratedFinance/Migrations/" + r.txnID + "/committed.json")
     try FinanceAuthority.validateMarkerPlacement(
-      canonicalMarker, transactionID: r.txnID, targets: [liveMonthly, liveResearch])
+      canonicalMarker, transactionID: r.txnID, targets: [liveMonthly])
     try check(
       FinanceAuthority.markerReference(for: canonicalMarker)
         == "app-group:IntegratedFinance/Migrations/" + r.txnID + "/committed.json",
@@ -120,36 +97,32 @@ import Foundation
     }
     let counterfeit = root.appendingPathComponent(
       "5G96498KGJ.com.gaojixu.savings/IntegratedFinance/Migrations/" + r.txnID + "/committed.json")
-    for realTarget in [liveMonthly, liveResearch] {
-      for wrong in [
-        marker, counterfeit,
-        canonicalMarker.deletingLastPathComponent().appendingPathComponent("other.json"),
-      ] {
-        try rejects(
-          "production marker must be in the actual app group with the canonical UUID path"
-        ) {
-          try FinanceAuthority.validateMarkerPlacement(
-            wrong, transactionID: r.txnID, targets: [realTarget])
-        }
+    for wrong in [
+      marker, counterfeit,
+      canonicalMarker.deletingLastPathComponent().appendingPathComponent("other.json"),
+    ] {
+      try rejects(
+        "production marker must be in the actual app group with the canonical UUID path"
+      ) {
+        try FinanceAuthority.validateMarkerPlacement(
+          wrong, transactionID: r.txnID, targets: [liveMonthly])
       }
     }
     try check(
       FinanceAuthority.markerReference(for: counterfeit) == counterfeit.path,
       "lookalike group must remain isolated")
     try FinanceAuthority.validateMarkerPlacement(
-      marker, transactionID: "local-fixture", targets: [m, f])
+      marker, transactionID: "local-fixture", targets: [m])
     try rejects("writers not frozen") { _ = try Migration.run(request("nofreeze", frozen: false)) }
-    try rejects("invalid module B (no target A may appear)") {
-      _ = try Migration.run(
-        request(
-          "bad", UUID().uuidString,
-          .init(
-            packagePath: pack.path, artifactSHA256: sha(bundle),
-            sourceRevision: String(repeating: "0", count: 64))))
+    let invalidInput = Migration.MonthlyInput(
+      snapshotPath: monthly.path, artifactSHA256: sqliteHash,
+      sourceRevision: String(repeating: "0", count: 64))
+    try rejects("monthly source revision mismatch") {
+      _ = try Migration.run(request("bad", input: invalidInput))
     }
     try check(
       !fm.fileExists(atPath: root.appendingPathComponent("bad/group/Monthly").path),
-      "first module published before second staged")
+      "invalid input was promoted")
     let abandonedRequest = request("recover-stage")
     try interrupt(abandonedRequest, at: "stage-built:monthly")
     let abandonedParent = URL(fileURLWithPath: abandonedRequest.targetMonthlyDirectory)
@@ -183,7 +156,7 @@ import Foundation
     try interrupt(r, at: "promoted:monthly")
     try check(
       fm.fileExists(atPath: m.appendingPathComponent("monthly.sqlite").path)
-        && !fm.fileExists(atPath: marker.path) && !fm.fileExists(atPath: f.path),
+        && !fm.fileExists(atPath: marker.path),
       "wrong partial state")
     try rejects("partial directory accidentally writable") {
       _ = try FinanceAuthority.require(module: "monthly", directory: m)
@@ -191,7 +164,9 @@ import Foundation
     try interrupt(r, at: "marker-published")
     try check(fm.fileExists(atPath: marker.path), "global marker missing")
     _ = try FinanceAuthority.require(module: "monthly", directory: m)
-    _ = try FinanceAuthority.require(module: "research-funding", directory: f)
+    try rejects("research module cannot run") {
+      _ = try FinanceAuthority.require(module: "research-funding", directory: m)
+    }
     let conn = try MonthlyFinanceDatabase(directory: m, readOnly: false)
     let initial = try conn.read()
     try check(
@@ -207,64 +182,34 @@ import Foundation
     let archive = journal.appendingPathComponent("sources/monthly/snapshot.sqlite")
     try check(
       sha(Data(contentsOf: archive)) == sqliteHash, "cat-containing source archive not identical")
-    try check(
-      try Data(
-        contentsOf: journal.appendingPathComponent("sources/research-funding/proofs/unit.txt"))
-        == attachment
-        && Data(contentsOf: f.appendingPathComponent("Attachments/proofs/unit.txt")) == attachment,
-      "attachment copies mismatch")
     try conn.transaction { $0.subscriptions[0].name = "User change after cutover" }
-    let currentFile = f.appendingPathComponent("library.json")
-    var changed = try JSONDecoder().decode(
-      ResearchFundingLibrary.self, from: Data(contentsOf: currentFile))
-    changed.fundingRecords[0].name = "Updated after migration"
-    try ResearchFundingFiles.encode(changed).write(to: currentFile, options: .atomic)
-    let updated = try Data(contentsOf: currentFile)
     let resume = try Migration.run(r)
     try check(
-      resume.alreadyCommitted && resume.counts["research-funding"]?["attachments"] == 1,
+      resume.alreadyCommitted && resume.verifiedArtifactSHA256["monthly"] == sqliteHash,
       "did not finalize interrupted commit")
     try check(
-      try conn.read().subscriptions.first?.name == "User change after cutover"
-        && Data(contentsOf: currentFile) == updated, "rerun overwrote new user data")
+      try conn.read().subscriptions.first?.name == "User change after cutover",
+      "rerun overwrote new user data")
     try check(try Migration.run(r).alreadyCommitted, "same transaction not idempotent")
     let beforeJournal = try Data(contentsOf: journal.appendingPathComponent("journal.json"))
     let j = try JSONSerialization.jsonObject(with: beforeJournal) as! [String: Any]
     let mods = j["prepared"] as! [String: [String: Any]]
     try check(
-      j["phase"] as? String == "committed"
+      j["phase"] as? String == "committed" && Set(mods.keys) == ["monthly"]
         && (mods["monthly"]?["idMap"] as? [String: String])?.values.contains(sub.id.uuidString)
-          == true
-        && (mods["research-funding"]?["idMap"] as? [String: String])?.values.contains("unit-asset")
           == true,
       "missing journal/source mapping")
     try rejects("conflicting transaction with same private root") {
       _ = try Migration.run(request("cutover"))
     }
     let savedMarker = try Data(contentsOf: marker)
-    var incomplete = try JSONDecoder().decode(FinanceCommitMarker.self, from: savedMarker)
-    incomplete.modules = ["monthly"]
-    try JSONEncoder().encode(incomplete).write(to: marker, options: .atomic)
-    try rejects("degraded joint marker cannot unlock surviving monthly member") {
+    var incompatible = try JSONDecoder().decode(FinanceCommitMarker.self, from: savedMarker)
+    incompatible.modules = ["monthly", "research-funding"]
+    try JSONEncoder().encode(incompatible).write(to: marker, options: .atomic)
+    try rejects("marker broader than monthly receipt cannot unlock monthly") {
       _ = try FinanceAuthority.require(module: "monthly", directory: m)
     }
-    try rejects("degraded joint marker cannot unlock research") {
-      _ = try FinanceAuthority.require(module: "research-funding", directory: f)
-    }
     try savedMarker.write(to: marker, options: .atomic)
-    let unknownField = Data(
-      ("{\"unknownFutureFinancialField\":47," + String(decoding: updated.dropFirst(), as: UTF8.self))
-        .utf8)
-    let duplicateField = Data(
-      ("{\"schemaVersion\":1," + String(decoding: updated.dropFirst(), as: UTF8.self)).utf8)
-    for unknown in [unknownField, duplicateField] {
-      try unknown.write(to: currentFile, options: .atomic)
-      try rejects("reentry must use the same strict research readback as the host") {
-        _ = try Migration.run(r)
-      }
-      try check(try Data(contentsOf: currentFile) == unknown, "invalid target was overwritten")
-    }
-    try updated.write(to: currentFile, options: .atomic)
     try Data("{bad".utf8).write(to: marker)
     try rejects("broken commit marker") { _ = try Migration.run(r) }
     try savedMarker.write(to: marker)
@@ -273,29 +218,43 @@ import Foundation
     try check(!fm.fileExists(atPath: marker.path), "missing marker recreated")
     try savedMarker.write(to: marker)
     let unknown = request("occupied")
-    let u = URL(fileURLWithPath: unknown.targetResearchDirectory)
+    let u = URL(fileURLWithPath: unknown.targetMonthlyDirectory)
     try fm.createDirectory(at: u, withIntermediateDirectories: true)
     let user = u.appendingPathComponent("existing")
     try Data("private".utf8).write(to: user)
     try rejects("unknown preexisting target") { _ = try Migration.run(unknown) }
     try check(
       try Data(contentsOf: user) == Data("private".utf8), "existing user contents overwritten")
-    try Data("other".utf8).write(to: at)
-    try rejects("new transaction with replaced input attachment despite unchanged package JSON") {
-      _ = try Migration.run(request("changed-attachment"))
+    try Data("other".utf8).write(to: monthly)
+    try rejects("new transaction with replaced input snapshot") {
+      _ = try Migration.run(request("changed-input"))
     }
-    try attachment.write(to: at)
+    try sqliteBytes.write(to: monthly)
     try fm.moveItem(at: source, to: root.appendingPathComponent("retired-source"))
     let archivedResume = try Migration.run(r)
     try check(
       archivedResume.alreadyCommitted
-        && archivedResume.verifiedArtifactSHA256["research-funding"] == sha(bundle),
+        && archivedResume.verifiedArtifactSHA256["monthly"] == sqliteHash,
       "safe resume should use frozen archive after source retirement")
     try fm.removeItem(at: archive)
     try rejects("missing archived source after commit") { _ = try Migration.run(r) }
     try check(!fm.fileExists(atPath: archive.path), "missing archive silently regenerated")
+
+    // Historical joint receipts remain valid for monthly only. No migration run follows these writes.
+    var legacyReceipt = try JSONDecoder().decode(
+      FinanceAuthorityReceipt.self, from: Data(contentsOf: m.appendingPathComponent("authority.json")))
+    legacyReceipt.expectedModules = ["monthly", "research-funding"]
+    var legacyMarker = try JSONDecoder().decode(FinanceCommitMarker.self, from: savedMarker)
+    legacyMarker.modules = ["monthly", "research-funding"]
+    try JSONEncoder().encode(legacyReceipt).write(
+      to: m.appendingPathComponent("authority.json"), options: .atomic)
+    try JSONEncoder().encode(legacyMarker).write(to: marker, options: .atomic)
+    _ = try FinanceAuthority.require(module: "monthly", directory: m)
+    try rejects("legacy research identifier cannot enable research") {
+      _ = try FinanceAuthority.require(module: "research-funding", directory: m)
+    }
     print(
-      "PASS finance transaction: isolated full staging, detached source archives, attachments and IDs, partial-promotion lockout, marker recovery, no replay or overwrite, conflict and missing-data protection"
+      "PASS monthly finance transaction: staging, recovery, idempotence, input and marker protection, legacy joint receipt compatibility"
     )
   }
 }

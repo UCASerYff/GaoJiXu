@@ -2,23 +2,17 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// Offline two-module cutover. Nothing in this type discovers live sources or runs on app startup.
+/// Offline monthly cutover. Nothing in this type discovers live sources or runs on app startup.
 enum FinanceIntegrationMigration {
   struct MonthlyInput: Codable, Equatable {
     let snapshotPath: String
     let artifactSHA256: String
     let sourceRevision: String
   }
-  struct ResearchInput: Codable, Equatable {
-    let packagePath: String
-    let artifactSHA256: String
-    let sourceRevision: String
-  }
   struct Request: Codable, Equatable {
     let schemaVersion: Int, txnID: String, writersFrozen: Bool, targetWritersStopped: Bool
-    let monthly: MonthlyInput?, research: ResearchInput?
-    let targetMonthlyDirectory: String, targetResearchDirectory: String, journalDirectory: String,
-      commitMarkerPath: String
+    let monthly: MonthlyInput?
+    let targetMonthlyDirectory: String, journalDirectory: String, commitMarkerPath: String
   }
   struct Report: Codable {
     let transactionID: String, modules: [String], alreadyCommitted: Bool
@@ -58,7 +52,7 @@ enum FinanceIntegrationMigration {
   }
   private struct Module {
     let name: String, bundle: String, input: URL, artifact: String, revision: String, target: URL
-    var archiveName: String { name == "monthly" ? "snapshot.sqlite" : "package.json" }
+    var archiveName: String { "snapshot.sqlite" }
   }
   private static let fm = FileManager.default
   private static func check(_ test: Bool, _ message: String) throws {
@@ -85,6 +79,16 @@ enum FinanceIntegrationMigration {
     if lstat(u.path, &st) == 0 { return st }
     if errno == ENOENT { return nil }
     throw Failure("无法检查迁移路径（errno \(errno)）。")
+  }
+  private static func requireDirectory(_ url: URL) throws {
+    guard let st = try status(url), (st.st_mode & S_IFMT) == S_IFDIR else {
+      throw Failure("迁移目录不存在或不是普通目录。")
+    }
+  }
+  private static func validDigest(_ value: String) -> Bool {
+    value.utf8.count == 64 && value.utf8.allSatisfy {
+      (48...57).contains($0) || (97...102).contains($0)
+    }
   }
   private static func isInside(_ child: URL, _ directory: URL) -> Bool {
     let a = child.path.precomposedStringWithCanonicalMapping.lowercased()
@@ -149,7 +153,7 @@ enum FinanceIntegrationMigration {
   private static func manifest(_ root: URL) throws -> Manifest {
     var result = Manifest()
     func descend(_ d: URL, _ prefix: String) throws {
-      try ResearchFundingFiles.requireDirectory(d)
+      try requireDirectory(d)
       for name in try fm.contentsOfDirectory(atPath: d.path).sorted() {
         let u = d.appendingPathComponent(name)
         let k = prefix + name
@@ -210,7 +214,6 @@ enum FinanceIntegrationMigration {
       r.schemaVersion == 1 && UUID(uuidString: r.txnID) != nil && r.writersFrozen
         && r.targetWritersStopped, "需要 schema 1、有效事务 UUID，并先冻结所有源/目标写入者。")
     let monthly = try url(r.targetMonthlyDirectory)
-    let research = try url(r.targetResearchDirectory)
     let journal = try url(r.journalDirectory)
     let marker = try url(r.commitMarkerPath)
     let archivePath = journal.path.lowercased() + "/"
@@ -218,15 +221,13 @@ enum FinanceIntegrationMigration {
       !archivePath.contains("/5g96498kgj.com.gaojixu.savings/")
         && !archivePath.contains("/application support/gaoseries/savings/")
         && !archivePath.contains(".app/contents/"), "含原始资料的事务归档必须放在非生产的私有位置。")
-    let dirs = [monthly, research, journal]
+    let dirs = [monthly, journal]
     for i in dirs.indices {
       for j in dirs.indices where j != i {
         try check(!isInside(dirs[i], dirs[j]), "业务目录与归档事务目录不能重叠。")
       }
     }
-    for d in [monthly, research] {
-      try check(!isInside(marker, d) && !isInside(d, marker), "提交标记不能在业务目录内。")
-    }
+    try check(!isInside(marker, monthly) && !isInside(monthly, marker), "提交标记不能在业务目录内。")
     try check(
       !isInside(journal, marker)
         && (!isInside(marker, journal)
@@ -247,20 +248,11 @@ enum FinanceIntegrationMigration {
           input: try url(m.snapshotPath, inspect: false), artifact: m.artifactSHA256,
           revision: m.sourceRevision, target: monthly))
     }
-    if let m = r.research {
-      modules.append(
-        .init(
-          name: "research-funding", bundle: ResearchFundingLibrary.sourceID,
-          input: try url(m.packagePath, inspect: false), artifact: m.artifactSHA256,
-          revision: m.sourceRevision, target: research))
-    }
     try check(!modules.isEmpty, "该事务没有明确输入模块。")
     try FinanceAuthority.validateMarkerPlacement(
       marker, transactionID: r.txnID, targets: modules.map(\.target))
     for m in modules {
-      try check(
-        ResearchFundingFormat.digest(m.artifact) && ResearchFundingFormat.digest(m.revision),
-        "输入摘要或来源修订格式无效。")
+      try check(validDigest(m.artifact) && validDigest(m.revision), "输入摘要或来源修订格式无效。")
       for out in dirs + [marker] {
         try check(!isInside(m.input, out) && !isInside(out, m.input), "输入与输出路径重叠。")
       }
@@ -269,38 +261,18 @@ enum FinanceIntegrationMigration {
   }
   private static func verifyInput(_ m: Module) throws {
     _ = try url(m.input.path)
-    if m.name == "monthly" {
-      for suffix in ["-wal", "-journal", "-shm"] {
-        try check(
-          try status(URL(fileURLWithPath: m.input.path + suffix)) == nil,
-          "需要已合并 WAL 的独立 SQLite 一致快照，不能直接截取活动数据库。")
-      }
+    for suffix in ["-wal", "-journal", "-shm"] {
+      try check(
+        try status(URL(fileURLWithPath: m.input.path + suffix)) == nil,
+        "需要已合并 WAL 的独立 SQLite 一致快照，不能直接截取活动数据库。")
     }
     try check(try digest(m.input).sha256 == m.artifact, "输入文件实际 SHA-256 不符。")
-    if m.name == "research-funding" {
-      for a in try assets(m.input) {
-        try ResearchFundingFiles.verify(a, at: m.input.deletingLastPathComponent())
-      }
-    }
-  }
-  private struct AssetList: Decodable { let attachments: [ResearchFundingAttachment] }
-  private static func assets(_ u: URL) throws -> [ResearchFundingAttachment] {
-    try JSONDecoder().decode(AssetList.self, from: ResearchFundingFiles.data(at: u)).attachments
   }
   private static func archive(_ m: Module, _ journal: URL) throws -> (URL, Manifest) {
     let root = journal.appendingPathComponent("sources")
     let final = root.appendingPathComponent(m.name)
     let file = final.appendingPathComponent(m.archiveName)
     try makeDir(root)
-    let list = m.name == "research-funding" ? try assets(m.input) : []
-    let paths = list.map { $0.relativePath.precomposedStringWithCanonicalMapping.lowercased() }
-    try check(
-      Set(paths).count == paths.count
-        && list.allSatisfy {
-          ResearchFundingFormat.safeRelative($0.relativePath)
-            && ResearchFundingFormat.digest($0.sha256) && $0.byteCount >= 0
-            && !($0.relativePath.lowercased() + "/").hasPrefix(m.archiveName + "/")
-        }, "科研附件路径或摘要冲突。")
     let initial = try digest(m.input)
     try check(initial.sha256 == m.artifact, "归档前输入已变化。")
     if try status(final) == nil {
@@ -309,22 +281,13 @@ enum FinanceIntegrationMigration {
       try check(
         try digest(m.input, copyTo: tmp.appendingPathComponent(m.archiveName)) == initial,
         "归档期间输入已变化。")
-      for item in list {
-        try ResearchFundingFiles.verify(
-          item, at: m.input.deletingLastPathComponent(),
-          copyingTo: tmp.appendingPathComponent(item.relativePath))
-      }
       try promote(tmp, final)
     }
-    try ResearchFundingFiles.requireDirectory(final)
+    try requireDirectory(final)
     let stat = try manifest(final)
-    let expected = Set(list.map(\.relativePath) + [m.archiveName])
     try check(
-      Set(stat.files.keys) == expected && stat.files[m.archiveName] == initial, "源归档文件清单不一致。")
-    for item in list {
-      try ResearchFundingFiles.verify(item, at: m.input.deletingLastPathComponent())
-      try ResearchFundingFiles.verify(item, at: final)
-    }
+      Set(stat.files.keys) == [m.archiveName] && stat.files[m.archiveName] == initial,
+      "源归档文件清单不一致。")
     try check(try digest(m.input) == initial, "归档后冻结输入已变化。")
     return (file, stat)
   }
@@ -334,10 +297,7 @@ enum FinanceIntegrationMigration {
       module: m.name, transactionID: j.request.txnID, sourceBundleID: m.bundle,
       sourceRevision: m.revision, sourceFrozen: true, mode: "migrated", activatedAt: j.startedAt,
       commitMarkerPath: FinanceAuthority.markerReference(for: marker),
-      expectedModules: [
-        j.request.monthly == nil ? nil : "monthly",
-        j.request.research == nil ? nil : "research-funding",
-      ].compactMap { $0 })
+      expectedModules: [j.request.monthly == nil ? nil : "monthly"].compactMap { $0 })
   }
   private static func monthlyData(_ u: URL) throws -> MonthlyFinanceState {
     let conn = try MonthlyFinanceConnection(existing: u, readOnly: true)
@@ -356,34 +316,23 @@ enum FinanceIntegrationMigration {
     defer { if !complete { try? fm.removeItem(at: stage) } }
     guard let identity = try status(stage) else { throw Failure("暂存目录消失。") }
     try register(StageIdentity(identity))
-    var counts: [String: Int]
+    let x = try MonthlyFinanceMigration.stage(snapshotURL: archived, into: stage)
+    try check(x.sourceSHA256 == m.revision, "月供业务 BLOB 修订不符。")
+    let counts = x.counts
+    let s = try monthlyData(x.databaseURL)
     var mapping: [String: String] = [:]
-    if m.name == "monthly" {
-      let x = try MonthlyFinanceMigration.stage(snapshotURL: archived, into: stage)
-      try check(x.sourceSHA256 == m.revision, "月供业务 BLOB 修订不符。")
-      counts = x.counts
-      let s = try monthlyData(x.databaseURL)
-      func add(_ type: String, _ id: String) { mapping[m.bundle + "|" + type + "|" + id] = id }
-      for a in s.subscriptions {
-        add("subscription", a.id.uuidString)
-        for p in a.plans { add("plan|" + a.id.uuidString, p.id.uuidString) }
-      }
-      for a in s.payments { add("payment", a.id) }
-      for a in s.claims { add("claim", a.id) }
-      for a in s.reviews { add("review", a.id) }
-      for a in s.events { add("event", a.id.uuidString) }
-      for a in s.benefits { add("benefit", a.id.uuidString) }
-      for id in s.legacyRewardIDs { add("legacyRewardID", id) }
-      for id in s.tombstones { add("tombstone", id) }
-    } else {
-      let x = try ResearchFundingImport.stage(
-        packageURL: archived, into: stage, expectedSourceRevision: m.revision,
-        expectedPackageSHA256: m.artifact)
-      try check(x.sourceRevision == m.revision && x.packageSHA256 == m.artifact, "科研资金修订不符。")
-      counts = ["active": x.activeCount, "trash": x.trashCount, "attachments": x.attachmentCount]
-      mapping = x.idMap
-      for a in try assets(archived) { mapping[m.bundle + "|attachment|" + a.id] = a.id }
+    func add(_ type: String, _ id: String) { mapping[m.bundle + "|" + type + "|" + id] = id }
+    for a in s.subscriptions {
+      add("subscription", a.id.uuidString)
+      for p in a.plans { add("plan|" + a.id.uuidString, p.id.uuidString) }
     }
+    for a in s.payments { add("payment", a.id) }
+    for a in s.claims { add("claim", a.id) }
+    for a in s.reviews { add("review", a.id) }
+    for a in s.events { add("event", a.id.uuidString) }
+    for a in s.benefits { add("benefit", a.id.uuidString) }
+    for id in s.legacyRewardIDs { add("legacyRewardID", id) }
+    for id in s.tombstones { add("tombstone", id) }
     try write(authority(m, j, marker), stage.appendingPathComponent("authority.json"))
     let contents = try manifest(stage)
     for name in contents.files.keys {
@@ -475,20 +424,11 @@ enum FinanceIntegrationMigration {
     }
   }
   private static func validateCurrent(_ m: Module, _ j: Journal, _ marker: URL) throws {
-    try ResearchFundingFiles.requireDirectory(m.target)
+    try requireDirectory(m.target)
     try check(
       try decode(FinanceAuthorityReceipt.self, m.target.appendingPathComponent("authority.json"))
         == authority(m, j, marker), "已提交目录的权威凭据不一致。")
-    if m.name == "monthly" {
-      _ = try monthlyData(m.target.appendingPathComponent("monthly.sqlite"))
-    } else {
-      let lib = try ResearchFundingFiles.decode(
-        ResearchFundingFiles.data(at: m.target.appendingPathComponent("library.json")))
-      try check(lib.sourceBundleID == m.bundle && lib.sourceRevision == m.revision, "科研资料来源已变化。")
-      for f in lib.attachments {
-        try ResearchFundingFiles.verify(f, at: m.target.appendingPathComponent("Attachments"))
-      }
-    }
+    _ = try monthlyData(m.target.appendingPathComponent("monthly.sqlite"))
   }
   static func run(_ request: Request, checkpoint: ((String) throws -> Void)? = nil) throws -> Report
   {
@@ -507,7 +447,7 @@ enum FinanceIntegrationMigration {
           promoted: []), tmp.appendingPathComponent("journal.json"))
       try promote(tmp, dir)
     }
-    try ResearchFundingFiles.requireDirectory(dir)
+    try requireDirectory(dir)
     let lock = Darwin.open(dir.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
     guard lock >= 0 else { throw Failure("无法锁定迁移日志。") }
     defer { close(lock) }

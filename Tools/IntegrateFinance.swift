@@ -5,10 +5,10 @@ import Foundation
   private static let help = """
     IntegrateFinance --request /absolute/private/request.json
     Required JSON: schemaVersion=1, txnID=<UUID>, writersFrozen=true, targetWritersStopped=true,
-      targetMonthlyDirectory, targetResearchDirectory, journalDirectory, commitMarkerPath (absolute paths),
-      and at least one of monthly:{snapshotPath,artifactSHA256,sourceRevision} or research:{packagePath,artifactSHA256,sourceRevision}.
-    The monthly snapshot must be detached and WAL-complete. The research package and its declared files must be frozen.
-    Use a new private per-transaction journal directory, outside the target business directories.
+      targetMonthlyDirectory, journalDirectory, commitMarkerPath (absolute paths),
+      and monthly:{snapshotPath,artifactSHA256,sourceRevision}.
+    The monthly snapshot must be detached and WAL-complete.
+    Use a new private per-transaction journal directory, outside the target business directory.
     For the installed app set commitMarkerPath to <Savings App Group>/IntegratedFinance/Migrations/<txnID>/committed.json.
     Use the exact same request for recovery. The tool does not stop old writers, make payments, or discover live data.
     """
@@ -18,18 +18,16 @@ import Foundation
     guard b.count <= 128 * 1024, let j = try JSONSerialization.jsonObject(with: b) as? [String: Any]
     else { throw FinanceIntegrationMigration.Failure("请求文件无效。") }
     let allowed: Set<String> = [
-      "schemaVersion", "txnID", "writersFrozen", "targetWritersStopped", "monthly", "research",
-      "targetMonthlyDirectory", "targetResearchDirectory", "journalDirectory", "commitMarkerPath",
+      "schemaVersion", "txnID", "writersFrozen", "targetWritersStopped", "monthly",
+      "targetMonthlyDirectory", "journalDirectory", "commitMarkerPath",
     ]
     guard Set(j.keys).isSubset(of: allowed) else {
       throw FinanceIntegrationMigration.Failure("请求含未知字段，未执行。")
     }
-    for (key, name) in [("monthly", "snapshotPath"), ("research", "packagePath")] {
-      if let v = j[key], !(v is NSNull) {
-        guard let inputs = v as? [String: Any],
-          Set(inputs.keys) == [name, "artifactSHA256", "sourceRevision"]
-        else { throw FinanceIntegrationMigration.Failure("冻结输入字段无效。") }
-      }
+    if let v = j["monthly"], !(v is NSNull) {
+      guard let inputs = v as? [String: Any],
+        Set(inputs.keys) == ["snapshotPath", "artifactSHA256", "sourceRevision"]
+      else { throw FinanceIntegrationMigration.Failure("冻结输入字段无效。") }
     }
     return try JSONDecoder().decode(FinanceIntegrationMigration.Request.self, from: b)
   }

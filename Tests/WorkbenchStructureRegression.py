@@ -42,6 +42,14 @@ def test_workspace_navigation() -> None:
     require("WorkbenchTopNavigation" in content, "缺少四项顶部导航")
     require("WorkbenchWorkspaceTabs" in content, "缺少页内子导航")
     require("sidebar" not in content.lower(), "旧侧栏仍残留")
+    for deleted in (
+        "Tests/ResearchFundingRegression.swift", "Tests/run_research_funding.zsh",
+        "Tests/Fixtures/ResearchFunding/research-funding-v1.json",
+    ):
+        require(not (ROOT / deleted).exists(), f"科研测试仍存在：{deleted}")
+    migration = text("Sources/FinanceIntegrationMigration.swift")
+    for forbidden in ("ResearchInput", "ResearchFunding", "targetResearchDirectory"):
+        require(forbidden not in migration, f"科研迁移仍残留：{forbidden}")
 
 
 def test_visual_system() -> None:
