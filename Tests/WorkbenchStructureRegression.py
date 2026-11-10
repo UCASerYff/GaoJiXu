@@ -49,9 +49,31 @@ def test_visual_system() -> None:
     require('Text(section.title).font(.pixel' not in theme, "财务标题仍使用像素字体")
 
 
+def test_records_and_editors() -> None:
+    accounting = text("Sources/AccountingViews.swift")
+    finance = text("Sources/FinanceViews.swift")
+    fixed_income = text("Sources/FixedIncomeView.swift")
+    monthly = text("Sources/MonthlyFinanceEditors.swift")
+    research = text("Sources/ResearchFundingView.swift")
+    require("LedgerDayGroup" in accounting, "流水未按日期分组")
+    require("SavingsDayGroup" in finance, "积蓄记录未按日期分组")
+    for name, source in (
+        ("记账", accounting), ("积蓄", finance), ("固定收入", fixed_income),
+        ("固定支出", monthly), ("科研", research),
+    ):
+        require("WorkbenchEditorScaffold" in source, f"{name}编辑器未使用统一骨架")
+    for preserved in (
+        "store.saveLedgerEntry", "store.saveRecord", "store.confirmFixedIncome",
+        "MonthlyFinanceEngine.savePayment", "MonthlyFinanceEngine.saveSubscription",
+    ):
+        require(preserved in accounting + finance + fixed_income + monthly, f"原保存流程丢失：{preserved}")
+    require("store.save(" in research, "科研保存流程丢失")
+
+
 def main() -> None:
     test_workspace_navigation()
     test_visual_system()
+    test_records_and_editors()
     print("Workbench structure regression: PASS")
 
 

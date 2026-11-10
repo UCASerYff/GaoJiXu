@@ -150,24 +150,32 @@ private struct FixedIncomePlanEditor: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(original == nil ? "新建固定收入计划" : "编辑固定收入计划").font(.title2.weight(.semibold))
-            Form {
-                TextField("收入名称", text: $name)
+        WorkbenchEditorScaffold(
+            title: original == nil ? "新建固定收入计划" : "编辑固定收入计划",
+            subtitle: "先写预计，实际到账后再确认入账。"
+        ) {
+            WorkbenchFormSection("收入信息") {
+                TextField("收入名称", text: $name).textFieldStyle(.roundedBorder)
                 Picker("分类", selection: $category) {
                     ForEach(FixedIncomeCategory.allCases, id: \.self) { value in Text(SavingsCatalog.ledgerCategory(value.rawValue)?.name ?? "收入").tag(value) }
                 }
                 Picker("币种", selection: $currency) { ForEach(SavingsCurrency.allCases) { Text($0.displayName).tag($0) } }
-                TextField("每月金额", text: $amount)
+                TextField("每月金额", text: $amount).textFieldStyle(.roundedBorder)
+                    .font(.title3.monospacedDigit())
+            }
+            WorkbenchFormSection("到账安排") {
                 Stepper("预计每月 \(day) 日到账", value: $day, in: 1...31)
                 if day >= 29 { Text("短月按该月最后一天预计。").font(.caption).foregroundStyle(.secondary) }
                 if let original { LabeledContent("起始月份", value: original.startMonth) }
                 else { DatePicker("起始月份（取所选年月）", selection: $firstDate, in: (FixedIncomePeriod.calendar().dateInterval(of: .month, for: Date())?.start ?? Date())..., displayedComponents: .date) }
+                Text("保存计划不会增加账户余额；已确认月份保留当时的金额和账户。").font(.caption).foregroundStyle(.secondary)
             }
-            Text("保存计划不会增加账户余额；已确认月份保留当时的金额和账户。").font(.callout).foregroundStyle(.secondary)
             if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
-            HStack { Spacer(); Button("取消") { dismiss() }; Button("保存计划") { save() }.buttonStyle(.borderedProminent).disabled(store.loadFailed) }
-        }.padding(24).frame(width: 490)
+        } actions: {
+            Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+            Button("保存计划") { save() }.buttonStyle(.borderedProminent).tint(SavingsTheme.accent).keyboardShortcut(.defaultAction).disabled(store.loadFailed)
+        }
+        .frame(width: 570, height: 600)
     }
     private func save() {
         guard let parsed = FixedIncomePlan.parseAmount(amount, currency: currency) else {
@@ -192,28 +200,30 @@ private struct FixedIncomeConfirmationView: View {
 
     var body: some View {
         let accounts = store.activeAccounts.filter { $0.currency == plan.currency }
-        VStack(alignment: .leading, spacing: 16) {
-            Text("确认固定收入到账").font(.title2.weight(.semibold))
-            Form {
+        WorkbenchEditorScaffold(title: "确认固定收入到账", subtitle: "只有真实收到的款项才进入账本。") {
+            WorkbenchFormSection("到账信息") {
                 LabeledContent("收入名称", value: plan.name)
                 LabeledContent("所属月份", value: month)
                 LabeledContent("到账金额", value: fixedIncomeMoney(plan.amount, plan.currency))
+                    .font(.title3.weight(.semibold).monospacedDigit())
+            }
+            WorkbenchFormSection("收款账户与日期") {
                 Picker("实际收款账户", selection: $accountID) {
                     Text("请选择账户").tag("")
                     ForEach(accounts) { account in Text(account.name).tag(account.id) }
                 }
                 if accounts.isEmpty { Text("没有可用的 \(plan.currency.rawValue) 账户。请先在资产账户中添加或启用收款账户。").font(.caption).foregroundStyle(.secondary) }
                 DatePicker("实际到账日期", selection: $receivedOn, in: ...Date(), displayedComponents: .date)
+                Toggle("我已核对账户，确认这笔收入实际到账", isOn: $received)
             }
-            Toggle("我已核对账户，确认这笔收入实际到账", isOn: $received)
             if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
-            HStack {
-                Spacer(); Button("取消") { dismiss() }
-                Button("确认并记入账本") {
-                    do { _ = try store.confirmFixedIncome(plan: plan, month: month, accountID: accountID, receivedOn: receivedOn, receivedIsConfirmed: received); dismiss() }
-                    catch { errorMessage = error.localizedDescription }
-                }.buttonStyle(.borderedProminent).disabled(!received || !accounts.contains(where: { $0.id == accountID }) || store.loadFailed)
-            }
-        }.padding(24).frame(width: 490)
+        } actions: {
+            Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+            Button("确认并记入账本") {
+                do { _ = try store.confirmFixedIncome(plan: plan, month: month, accountID: accountID, receivedOn: receivedOn, receivedIsConfirmed: received); dismiss() }
+                catch { errorMessage = error.localizedDescription }
+            }.buttonStyle(.borderedProminent).tint(SavingsTheme.accent).disabled(!received || !accounts.contains(where: { $0.id == accountID }) || store.loadFailed)
+        }
+        .frame(width: 570, height: 570)
     }
 }

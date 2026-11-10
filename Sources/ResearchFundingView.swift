@@ -274,50 +274,55 @@ private struct ResearchFundingEditor: View {
     _project = State(initialValue: record?.projectReference ?? "")
   }
   var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      Text(record == nil ? "新建科研资金计划" : "编辑科研资金计划").font(.title2.bold())
-      Form {
-        TextField("资金名称", text: $name)
-        TextField("每个发放月份的金额", text: $amount)
-        TextField("币种", text: $currency, prompt: Text("原界面按 CNY 显示"))
-        TextField("收款账户说明", text: $account)
-        TextField("明确关联的项目标识（选填）", text: $project)
+    WorkbenchEditorScaffold(
+      title: record == nil ? "新建科研资金计划" : "编辑科研资金计划",
+      subtitle: "科研资金独立管理，不并入个人净资产。"
+    ) {
+      WorkbenchFormSection("资金信息") {
+        TextField("资金名称", text: $name).textFieldStyle(.roundedBorder)
+        TextField("每个发放月份的金额", text: $amount).textFieldStyle(.roundedBorder)
+          .font(.title3.monospacedDigit())
+        TextField("币种", text: $currency, prompt: Text("原界面按 CNY 显示")).textFieldStyle(.roundedBorder)
+        TextField("收款账户说明", text: $account).textFieldStyle(.roundedBorder)
+        TextField("明确关联的项目标识（选填）", text: $project).textFieldStyle(.roundedBorder)
         Stepper(
           "适用年份：\(String(year))", value: $year,
           in: min(2000, record?.year ?? 2000)...max(2100, record?.year ?? 2100))
       }
-      Text("发放月份").font(.headline)
-      LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4)) {
-        ForEach(1...12, id: \.self) { m in
-          Toggle(
-            "\(m) 月",
-            isOn: Binding(
-              get: { months.contains(m) },
-              set: { if $0 { months.insert(m) } else { months.remove(m) } })
-          ).toggleStyle(.checkbox)
+      WorkbenchFormSection("发放月份") {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4)) {
+          ForEach(1...12, id: \.self) { m in
+            Toggle(
+              "\(m) 月",
+              isOn: Binding(
+                get: { months.contains(m) },
+                set: { if $0 { months.insert(m) } else { months.remove(m) } })
+            ).toggleStyle(.checkbox)
+          }
         }
       }
       if let record {
         let attachments = store.library?.attachments.filter { $0.fundingID == record.id } ?? []
         if !attachments.isEmpty {
-          Text("关联附件").font(.headline)
-          ForEach(attachments) { a in
-            Button(a.relativePath) {
-              do {
-                let url = try store.attachmentURL(a.id)
-                guard NSWorkspace.shared.open(url) else { throw ResearchFundingError.unavailable }
-              } catch { self.error = error.localizedDescription }
+          WorkbenchFormSection("关联附件") {
+            ForEach(attachments) { a in
+              Button(a.relativePath) {
+                do {
+                  let url = try store.attachmentURL(a.id)
+                  guard NSWorkspace.shared.open(url) else { throw ResearchFundingError.unavailable }
+                } catch { self.error = error.localizedDescription }
+              }
+              .frame(maxWidth: .infinity, alignment: .leading)
             }
           }
         }
       }
       if let error { Text(error).font(.caption).foregroundStyle(.red) }
-      HStack {
-        Spacer()
-        Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-        Button("保存") { save() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-      }
-    }.padding(22).frame(minWidth: 510)
+    } actions: {
+      Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+      Button("保存") { save() }.buttonStyle(.borderedProminent).tint(SavingsTheme.accent).keyboardShortcut(.defaultAction)
+    }
+    .frame(minWidth: 590, idealWidth: 630, minHeight: 650)
   }
   private func save() {
     guard let a = Double(amount.trimmingCharacters(in: .whitespacesAndNewlines)), a.isFinite, a > 0

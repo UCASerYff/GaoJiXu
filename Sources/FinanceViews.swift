@@ -366,13 +366,25 @@ struct RecordsView: View {
                 .savingsPanel(cornerRadius: 14)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
-                        SavingsTableHeader()
-                        ForEach(filteredRecords) { record in
-                            SavingsTableRow(record: record) {
-                                editingRecord = record
-                            } delete: {
-                                deleteCandidate = record
+                    let groups = SavingsDayGroup.groups(filteredRecords)
+                    LazyVStack(alignment: .leading, spacing: 17) {
+                        ForEach(groups) { group in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text(group.title).font(.headline)
+                                    Text("\(group.records.count) 笔").font(.caption).foregroundStyle(.secondary)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 4)
+                                VStack(spacing: 8) {
+                                    ForEach(group.records) { record in
+                                        SavingsTableRow(record: record) {
+                                            editingRecord = record
+                                        } delete: {
+                                            deleteCandidate = record
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -404,22 +416,23 @@ struct RecordsView: View {
     }
 }
 
-private struct SavingsTableHeader: View {
-    var body: some View {
-        HStack(spacing: 12) {
-            Text("日期").frame(width: 72, alignment: .leading)
-            Text("类型").frame(width: 82, alignment: .leading)
-            Text("目标 / 账户").frame(width: 235, alignment: .leading)
-            Text("分类 / 备注")
-            Spacer(minLength: 12)
-            Text("金额").frame(width: 122, alignment: .trailing)
-            Text("").frame(width: 26)
+private struct SavingsDayGroup: Identifiable {
+    let id: Date
+    let title: String
+    let records: [SavingsRecord]
+
+    static func groups(_ records: [SavingsRecord]) -> [SavingsDayGroup] {
+        let calendar = Calendar.autoupdatingCurrent
+        let grouped = Dictionary(grouping: records) { calendar.startOfDay(for: $0.date) }
+        return grouped.keys.sorted(by: >).map { day in
+            let dayRecords = grouped[day]?.sorted { $0.date > $1.date } ?? []
+            let title = calendar.isDateInToday(day)
+                ? "今天 · \(SavingsFormatters.day.string(from: day))"
+                : calendar.isDateInYesterday(day)
+                    ? "昨天 · \(SavingsFormatters.day.string(from: day))"
+                    : SavingsFormatters.day.string(from: day)
+            return SavingsDayGroup(id: day, title: title, records: dayRecords)
         }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -432,50 +445,47 @@ private struct SavingsTableRow: View {
     var body: some View {
         let goal = store.goal(for: record.goalID)
         let color = record.kind == .deposit ? SavingsTheme.teal : SavingsTheme.orange
-        HStack(spacing: 12) {
-            Text(SavingsFormatters.shortDay.string(from: record.date))
-                .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-                .frame(width: 72, alignment: .leading)
-            Label(record.kind.shortTitle, systemImage: record.kind.symbol)
-                .font(.callout.weight(.medium)).foregroundStyle(color)
-                .frame(width: 82, alignment: .leading)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(goal?.title ?? "已删除的目标").font(.callout.weight(.medium)).lineLimit(1)
-                if let route = accountRoute { Text(route).font(.caption2).foregroundStyle(SavingsTheme.blue).lineLimit(1) }
-            }
-            .frame(width: 235, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(record.category.title).font(.callout).lineLimit(1)
-                if !record.note.isEmpty { Text(record.note).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
+        HStack(spacing: 14) {
+            Image(systemName: record.category.symbol)
+                .font(.system(size: 17, weight: .semibold)).foregroundStyle(color)
+                .frame(width: 42, height: 42)
+                .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text(goal?.title ?? "已删除的目标").font(.callout.weight(.semibold)).lineLimit(1)
+                    WorkbenchStatusPill(text: record.kind.shortTitle, color: color, symbol: record.kind.symbol)
+                }
+                Text(record.note.isEmpty ? record.category.title : record.note)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                if let route = accountRoute { Text(route).font(.caption2).foregroundStyle(.tertiary).lineLimit(1) }
             }
             Spacer(minLength: 12)
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: 3) {
                 Text(SavingsFormatters.money(record.kind == .deposit ? record.amount : -record.amount,
                                              currency: recordCurrency, signed: true))
-                    .font(.callout.monospacedDigit().weight(.semibold)).foregroundStyle(color)
-                Text(recordCurrency.rawValue)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
+                    .font(.body.monospacedDigit().weight(.bold)).foregroundStyle(color)
+                    .minimumScaleFactor(0.75)
+                Text(recordCurrency.rawValue).font(.caption2.monospaced()).foregroundStyle(.secondary)
             }
-            .frame(width: 122, alignment: .trailing)
+            .frame(width: 140, alignment: .trailing)
             Menu {
                 Button("编辑", action: edit)
                 Button("删除", role: .destructive, action: delete)
-            } label: { Image(systemName: "ellipsis").frame(width: 26, height: 26) }
+            } label: { Image(systemName: "ellipsis").frame(width: 28, height: 28) }
             .menuStyle(.borderlessButton)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
+        .padding(.horizontal, 15)
+        .padding(.vertical, 12)
+        .background(SavingsTheme.panel, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(Color.primary.opacity(0.055)))
+        .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
         .onTapGesture(perform: edit)
         .contextMenu {
             Button("编辑", action: edit)
             Button("删除", role: .destructive, action: delete)
         }
-        .overlay(alignment: .bottom) { Divider().opacity(0.55) }
     }
 
-    /// 记录币种：优先用记录自身的冗余币种字段（V2.3 已回填），旧档缺失时回退目标币种。
     private var recordCurrency: SavingsCurrency {
         SavingsCurrency(rawValue: record.currency) ?? store.goal(for: record.goalID)?.currency ?? .CNY
     }
@@ -672,26 +682,20 @@ struct GoalEditorView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(goal == nil ? "新建攒钱目标" : "编辑攒钱目标").font(.title2.weight(.semibold))
-                    Text("绑定存钱罐账户后，积蓄记录会同步生成资产转账。").font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("取消") { dismiss() }
-                Button("保存") { saveAndDismiss() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || targetAmount <= 0)
-            }
-            .padding(22)
-            Divider()
-            Form {
-                TextField("目标名称", text: $title)
+        WorkbenchEditorScaffold(
+            title: goal == nil ? "新建攒钱目标" : "编辑攒钱目标",
+            subtitle: "给一个愿望明确的金额、日期和存钱罐。"
+        ) {
+            WorkbenchFormSection("目标与金额") {
+                TextField("目标名称", text: $title).textFieldStyle(.roundedBorder)
                 Picker("币种", selection: $currency) {
                     ForEach(SavingsCurrency.allCases) { value in Text(value.displayName).tag(value) }
                 }
-                TextField("目标金额", value: $targetAmount, format: .number)
-                TextField("已有金额", value: $startingAmount, format: .number)
+                TextField("目标金额", value: $targetAmount, format: .number).textFieldStyle(.roundedBorder)
+                    .font(.title3.monospacedDigit())
+                TextField("已有金额", value: $startingAmount, format: .number).textFieldStyle(.roundedBorder)
+            }
+            WorkbenchFormSection("账户与日期") {
                 Picker("存钱罐账户", selection: $savingsAccountID) {
                     Text("记录时选择").tag("")
                     ForEach(store.activeAccounts.filter { $0.currency == currency }) { account in
@@ -699,6 +703,9 @@ struct GoalEditorView: View {
                     }
                 }
                 DatePicker("计划完成日期", selection: $deadline, displayedComponents: .date)
+                Text("绑定后，积蓄记录会同步生成资产转账。").font(.caption).foregroundStyle(.secondary)
+            }
+            WorkbenchFormSection("个性与备注") {
                 Picker("图标", selection: $symbol) {
                     ForEach(symbols, id: \.self) { value in Label(value, systemImage: value).tag(value) }
                 }
@@ -707,12 +714,14 @@ struct GoalEditorView: View {
                         HStack { Circle().fill(SavingsTheme.goalColor(value)).frame(width: 10, height: 10); Text(value) }.tag(value)
                     }
                 }
-                TextField("为什么想攒下这笔钱（可选）", text: $notes, axis: .vertical).lineLimit(3...5)
+                TextField("为什么想攒下这笔钱（可选）", text: $notes, axis: .vertical).lineLimit(3...5).textFieldStyle(.roundedBorder)
             }
-            .formStyle(.grouped)
-            .padding(18)
+        } actions: {
+            Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+            Button("保存") { saveAndDismiss() }.buttonStyle(.borderedProminent).tint(SavingsTheme.accent).keyboardShortcut(.defaultAction)
+                .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || targetAmount <= 0)
         }
-        .frame(width: 570, height: 610)
+        .frame(width: 610, height: 690)
         .onAppear { if goal == nil { currency = settings.defaultCurrency } }
         .onChange(of: currency) { _, _ in
             if store.account(savingsAccountID)?.currency != currency { savingsAccountID = "" }
@@ -774,46 +783,35 @@ struct RecordEditorView: View {
     private var savingsAccounts: [LedgerAccount] { matchingAccounts.filter { $0.id != fundingAccountID } }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(existingRecord == nil ? "记一笔积蓄" : "编辑积蓄记录").font(.title2.weight(.semibold))
-                    Text(kind == .deposit ? "从资金账户转入目标存钱罐，并按金额发放星券。" : "从目标存钱罐转回指定账户，不计入日常收支。")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("取消") { dismiss() }
-                Button("保存") { saveAndDismiss() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                    .disabled(goalID.isEmpty || amount <= 0 || fundingAccountID.isEmpty || savingsAccountID.isEmpty)
-            }
-            .padding(22)
-            Divider()
-            Form {
+        WorkbenchEditorScaffold(
+            title: existingRecord == nil ? "记一笔积蓄" : "编辑积蓄记录",
+            subtitle: kind == .deposit ? "把一笔钱放进真正想实现的目标。" : "从目标存钱罐转回指定账户，不计入日常收支。"
+        ) {
+            WorkbenchFormSection("目标与金额") {
                 Picker("类型", selection: $kind) {
                     ForEach(SavingsRecordKind.allCases) { value in Text(value.title).tag(value) }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.segmented).labelsHidden()
                 Picker("所属目标", selection: $goalID) {
-                    ForEach(selectableGoals) { goal in
-                        Text("\(goal.title) · \(goal.currency.rawValue)").tag(goal.id)
-                    }
+                    ForEach(selectableGoals) { goal in Text("\(goal.title) · \(goal.currency.rawValue)").tag(goal.id) }
                 }
-                HStack {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text(selectedGoal?.currency.symbol ?? settings.defaultCurrency.symbol)
-                        .font(.title2.weight(.semibold)).foregroundStyle(.secondary)
-                    TextField("金额", value: $amount, format: .number).font(.title2.monospacedDigit())
+                        .font(.system(size: 30, weight: .semibold)).foregroundStyle(.secondary)
+                    TextField("金额", value: $amount, format: .number)
+                        .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
+                        .textFieldStyle(.plain)
                 }
+                .padding(.vertical, 8)
+            }
+            WorkbenchFormSection("账户去向") {
                 Picker(kind == .deposit ? "转出账户" : "转入账户", selection: $fundingAccountID) {
                     Text("请选择").tag("")
-                    ForEach(fundingAccounts) { account in
-                        Text("\(account.name) · \(SavingsFormatters.money(store.accountBalance(account), currency: account.currency))").tag(account.id)
-                    }
+                    ForEach(fundingAccounts) { account in Text("\(account.name) · \(SavingsFormatters.money(store.accountBalance(account), currency: account.currency))").tag(account.id) }
                 }
                 Picker("目标存钱罐", selection: $savingsAccountID) {
                     Text("请选择").tag("")
-                    ForEach(savingsAccounts) { account in
-                        Text("\(account.name) · \(SavingsFormatters.money(store.accountBalance(account), currency: account.currency))").tag(account.id)
-                    }
+                    ForEach(savingsAccounts) { account in Text("\(account.name) · \(SavingsFormatters.money(store.accountBalance(account), currency: account.currency))").tag(account.id) }
                 }
                 if matchingAccounts.count < 2 {
                     Label("请先在资产账户中创建至少两个与目标同币种的账户。", systemImage: "exclamationmark.triangle.fill")
@@ -822,16 +820,20 @@ struct RecordEditorView: View {
                 if kind == .withdrawal, let goal = selectedGoal {
                     LabeledContent("当前可用", value: SavingsFormatters.money(store.balance(for: goal), currency: goal.currency))
                 }
+            }
+            WorkbenchFormSection("分类、日期与备注") {
                 Picker("来源分类", selection: $category) {
                     ForEach(SavingsCategory.allCases) { value in Label(value.title, systemImage: value.symbol).tag(value) }
                 }
                 DatePicker("日期", selection: $date, displayedComponents: .date)
-                TextField("备注（可选）", text: $note, axis: .vertical).lineLimit(2...4)
+                TextField("备注（可选）", text: $note, axis: .vertical).lineLimit(2...4).textFieldStyle(.roundedBorder)
             }
-            .formStyle(.grouped)
-            .padding(18)
+        } actions: {
+            Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+            Button("保存") { saveAndDismiss() }.buttonStyle(.borderedProminent).tint(SavingsTheme.accent).keyboardShortcut(.defaultAction)
+                .disabled(goalID.isEmpty || amount <= 0 || fundingAccountID.isEmpty || savingsAccountID.isEmpty)
         }
-        .frame(width: 580, height: 650)
+        .frame(width: 620, height: 700)
         .onAppear {
             if goalID.isEmpty { goalID = selectableGoals.first?.id ?? "" }
             syncAccounts()

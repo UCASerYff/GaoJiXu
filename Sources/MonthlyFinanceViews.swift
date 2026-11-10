@@ -54,14 +54,18 @@ private struct MonthlyFinanceRow<Content: View>: View {
   let title: String, detail: String
   @ViewBuilder let content: () -> Content
   var body: some View {
-    HStack(spacing: 12) {
-      VStack(alignment: .leading, spacing: 4) {
-        Text(title).font(.headline)
-        Text(detail).font(.caption).foregroundStyle(.secondary)
+    HStack(spacing: 14) {
+      VStack(alignment: .leading, spacing: 5) {
+        Text(title).font(.callout.weight(.semibold))
+        Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
       }
-      Spacer()
+      Spacer(minLength: 12)
       content()
-    }.padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 9))
+    }
+    .padding(.horizontal, 15)
+    .padding(.vertical, 12)
+    .background(SavingsTheme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(0.055)))
   }
 }
 private enum MonthlyFinanceDestructive: Identifiable {

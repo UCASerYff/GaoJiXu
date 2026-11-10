@@ -321,17 +321,30 @@ struct LedgerView: View {
             if entries.isEmpty { emptyState }
             else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
-                        LedgerTableHeader()
-                        ForEach(Array(entries.dropFirst(page*100).prefix(100))) { entry in
-                            LedgerTableRow(entry: entry) {
-                                if entry.isBalanceAdjustment {
-                                    store.notice = "余额调整记录请在资产账户中通过再次修改余额更正。"
-                                } else if store.savingsRecord(forLedgerEntryID: entry.id) != nil {
-                                    store.notice = "这笔转账由积蓄计划管理，请在“积蓄记录”中编辑。"
-                                } else { editorSession = .init(entry: entry) }
-                            } delete: {
-                                store.deleteLedgerEntry(entry)
+                    let pagedEntries = Array(entries.dropFirst(page * 100).prefix(100))
+                    let groups = LedgerDayGroup.groups(pagedEntries)
+                    LazyVStack(alignment: .leading, spacing: 17) {
+                        ForEach(groups) { group in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text(group.title).font(.headline)
+                                    Text("\(group.entries.count) 笔").font(.caption).foregroundStyle(.secondary)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 4)
+                                VStack(spacing: 8) {
+                                    ForEach(group.entries) { entry in
+                                        LedgerTableRow(entry: entry) {
+                                            if entry.isBalanceAdjustment {
+                                                store.notice = "余额调整记录请在资产账户中通过再次修改余额更正。"
+                                            } else if store.savingsRecord(forLedgerEntryID: entry.id) != nil {
+                                                store.notice = "这笔转账由积蓄计划管理，请在“积蓄记录”中编辑。"
+                                            } else { editorSession = .init(entry: entry) }
+                                        } delete: {
+                                            store.deleteLedgerEntry(entry)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -453,22 +466,23 @@ struct LedgerCompactRow: View {
     }
 }
 
-private struct LedgerTableHeader: View {
-    var body: some View {
-        HStack(spacing: 12) {
-            Text("日期").frame(width: 72, alignment: .leading)
-            Text("类型").frame(width: 82, alignment: .leading)
-            Text("账户 / 去向").frame(width: 220, alignment: .leading)
-            Text("分类 / 备注")
-            Spacer(minLength: 12)
-            Text("金额").frame(width: 122, alignment: .trailing)
-            Text("").frame(width: 26)
+private struct LedgerDayGroup: Identifiable {
+    let id: Date
+    let title: String
+    let entries: [LedgerEntry]
+
+    static func groups(_ entries: [LedgerEntry]) -> [LedgerDayGroup] {
+        let calendar = Calendar.autoupdatingCurrent
+        let grouped = Dictionary(grouping: entries) { calendar.startOfDay(for: $0.date) }
+        return grouped.keys.sorted(by: >).map { day in
+            let dayEntries = grouped[day]?.sorted { $0.date > $1.date } ?? []
+            let title = calendar.isDateInToday(day)
+                ? "今天 · \(SavingsFormatters.day.string(from: day))"
+                : calendar.isDateInYesterday(day)
+                    ? "昨天 · \(SavingsFormatters.day.string(from: day))"
+                    : SavingsFormatters.day.string(from: day)
+            return LedgerDayGroup(id: day, title: title, entries: dayEntries)
         }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -479,41 +493,29 @@ private struct LedgerTableRow: View {
     let delete: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Text(SavingsFormatters.shortDay.string(from: entry.date))
-                .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-                .frame(width: 72, alignment: .leading)
-            Label(entry.isBalanceAdjustment ? "调整" : entry.kind.title, systemImage: entry.isBalanceAdjustment ? "arrow.triangle.2.circlepath" : entry.kind.symbol)
-                .font(.callout.weight(.medium))
+        HStack(spacing: 14) {
+            Image(systemName: entry.isBalanceAdjustment ? "arrow.triangle.2.circlepath" : entry.kind.symbol)
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(kindColor)
-                .frame(width: 82, alignment: .leading)
-                .overlay(alignment: .trailing) {
-                    if entry.recurringRuleID != nil {
-                        Image(systemName: "repeat")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .help("由周期记账自动生成")
-                    }
+                .frame(width: 42, height: 42)
+                .background(kindColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text(entry.isBalanceAdjustment ? "余额调整" : SavingsCatalog.ledgerCategory(entry.categoryID)?.name ?? entry.kind.title)
+                        .font(.callout.weight(.semibold)).lineLimit(1)
+                    if entry.recurringRuleID != nil { WorkbenchStatusPill(text: "周期", color: .secondary, symbol: "repeat") }
                 }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(sourceName).font(.callout.weight(.medium)).lineLimit(1)
-                if let target = store.account(entry.targetAccountID) {
-                    Text("→ \(target.name)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                }
-            }
-            .frame(width: 220, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.isBalanceAdjustment ? "余额调整" : SavingsCatalog.ledgerCategory(entry.categoryID)?.name ?? entry.kind.title)
-                    .font(.callout).lineLimit(1)
-                if !entry.note.isEmpty { Text(entry.note).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
+                Text(entry.note.isEmpty ? entry.kind.title : entry.note)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(accountRoute).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
             }
             Spacer(minLength: 12)
             if let account = store.account(entry.accountID) {
                 Text(SavingsFormatters.money(entry.isBalanceAdjustment && account.type.isLiability ? (entry.kind == .expense ? entry.amount : -entry.amount) : (entry.kind == .expense ? -entry.amount : entry.amount), currency: account.currency, signed: true))
-                    .font(.callout.monospacedDigit().weight(.semibold)).foregroundStyle(kindColor)
-                    .frame(width: 122, alignment: .trailing)
+                    .font(.body.monospacedDigit().weight(.bold)).foregroundStyle(kindColor)
+                    .frame(width: 145, alignment: .trailing).minimumScaleFactor(0.75)
             } else {
-                Text("—").frame(width: 122, alignment: .trailing).foregroundStyle(.secondary)
+                Text("—").frame(width: 145, alignment: .trailing).foregroundStyle(.secondary)
             }
             Menu {
                 if entry.isBalanceAdjustment {
@@ -524,12 +526,14 @@ private struct LedgerTableRow: View {
                     Button("编辑", action: edit)
                     Button("删除", role: .destructive, action: delete)
                 }
-            } label: { Image(systemName: "ellipsis").frame(width: 26, height: 26) }
+            } label: { Image(systemName: "ellipsis").frame(width: 28, height: 28) }
             .menuStyle(.borderlessButton)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
+        .padding(.horizontal, 15)
+        .padding(.vertical, 12)
+        .background(SavingsTheme.panel, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(Color.primary.opacity(0.055)))
+        .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
         .onTapGesture(perform: edit)
         .contextMenu {
             if entry.isBalanceAdjustment {
@@ -541,10 +545,13 @@ private struct LedgerTableRow: View {
                 Button("删除", role: .destructive, action: delete)
             }
         }
-        .overlay(alignment: .bottom) { Divider().opacity(0.55) }
     }
 
     private var sourceName: String { store.account(entry.accountID)?.name ?? "已归档账户" }
+    private var accountRoute: String {
+        guard let target = store.account(entry.targetAccountID) else { return sourceName }
+        return "\(sourceName)  →  \(target.name)"
+    }
     private var kindColor: Color {
         if entry.isBalanceAdjustment { return SavingsTheme.blue }
         return switch entry.kind {
@@ -623,45 +630,49 @@ struct LedgerEntryEditorView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(existingEntry == nil ? "记一笔账" : "编辑流水").font(.title2.weight(.semibold))
-                Spacer()
-                Button("取消") { dismiss() }
-                if existingEntry == nil {
-                    Button("保存并再记一笔") { saveAndContinue() }
-                        .help("保存当前流水后清空金额与备注，保留类型、账户与分类，方便连续记账")
-                }
-                Button("保存") { if performSave() { dismiss() } }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
-            }.padding(22)
-            Divider()
-            Form {
-                Picker("类型", selection: $kind) { ForEach(LedgerEntryKind.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) } }.pickerStyle(.segmented)
-                Picker(kind == .transfer ? "转出账户" : "账户", selection: $accountID) { ForEach(store.activeAccounts) { Text("\($0.name) · \($0.currency.rawValue)").tag($0.id) } }
-                if kind == .transfer { Picker("转入账户", selection: $targetAccountID) { Text("请选择").tag(""); ForEach(store.activeAccounts.filter { $0.id != accountID }) { Text("\($0.name) · \($0.currency.rawValue)").tag($0.id) } } }
+        WorkbenchEditorScaffold(
+            title: existingEntry == nil ? "记一笔账" : "编辑流水",
+            subtitle: "金额清楚，账户清楚，每一笔都有来处。"
+        ) {
+            WorkbenchFormSection("类型与金额") {
+                Picker("类型", selection: $kind) { ForEach(LedgerEntryKind.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) } }
+                    .pickerStyle(.segmented).labelsHidden()
                 AmountCalculatorView(expression: $amountExpression, currency: source?.currency.rawValue ?? "CNY")
                 if kind == .transfer && crossCurrency {
                     TextField(target.map { "实际转入（\($0.currency.rawValue)）" } ?? "实际转入", value: $targetAmount, format: .number.precision(.fractionLength(0...2)))
+                        .textFieldStyle(.roundedBorder)
                     impliedRateRow
                 }
-                if kind != .transfer { categoryGrid }
+            }
+            WorkbenchFormSection(kind == .transfer ? "账户去向" : "使用账户") {
+                Picker(kind == .transfer ? "转出账户" : "账户", selection: $accountID) { ForEach(store.activeAccounts) { Text("\($0.name) · \($0.currency.rawValue)").tag($0.id) } }
+                if kind == .transfer { Picker("转入账户", selection: $targetAccountID) { Text("请选择").tag(""); ForEach(store.activeAccounts.filter { $0.id != accountID }) { Text("\($0.name) · \($0.currency.rawValue)").tag($0.id) } } }
+            }
+            if kind != .transfer { categoryGrid }
+            WorkbenchFormSection("日期与备注") {
                 dateRow
                 HStack {
-                    TextField("备注（可选）", text: $note)
+                    TextField("备注（可选）", text: $note).textFieldStyle(.roundedBorder)
                     if !noteSuggestions.isEmpty {
                         Menu {
-                            ForEach(noteSuggestions, id: \.self) { suggestion in
-                                Button(suggestion) { note = suggestion }
-                            }
+                            ForEach(noteSuggestions, id: \.self) { suggestion in Button(suggestion) { note = suggestion } }
                         } label: { Image(systemName: "clock.arrow.circlepath") }
-                        .menuStyle(.borderlessButton)
-                        .frame(width: 28)
-                        .help("同分类最近备注，点选填入")
+                        .menuStyle(.borderlessButton).frame(width: 28).help("同分类最近备注，点选填入")
                     }
                 }
-                Section { Text("日常记账只维护真实收支、账户余额和预算，不发放游戏货币；账户互转不会重复计入收支。") }.font(.caption).foregroundStyle(.secondary)
-            }.formStyle(.grouped).padding(18)
-        }.frame(width: 580, height: 800)
+                Text("账户互转不会重复计入收支；日常记账不发放游戏货币。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } actions: {
+            Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+            if existingEntry == nil {
+                Button("保存并再记一笔") { saveAndContinue() }
+                    .help("保存当前流水后清空金额与备注，保留类型、账户与分类，方便连续记账")
+            }
+            Button("保存") { if performSave() { dismiss() } }
+                .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).tint(SavingsTheme.accent)
+        }
+        .frame(width: 620, height: 780)
         .onAppear {
             if accountID.isEmpty { accountID = store.defaultLedgerAccountID }
             if targetAccountID.isEmpty { targetAccountID = store.activeAccounts.first(where: { $0.id != accountID })?.id ?? "" }
@@ -678,7 +689,7 @@ struct LedgerEntryEditorView: View {
 
     /// 分类速选网格：图标 + 名称，按使用频次排序，点按即选并高亮。
     private var categoryGrid: some View {
-        Section("分类") {
+        WorkbenchFormSection("选择分类") {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 68), spacing: 8)], spacing: 8) {
                 ForEach(sortedCategories) { category in
                     let selected = category.id == categoryID
@@ -840,27 +851,32 @@ private struct AccountEditorView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack { Text(existingAccount == nil ? "新建账户" : "编辑账户").font(.title2.weight(.semibold)); Spacer(); Button("取消") { dismiss() }; Button("保存") { store.saveAccount(existingID: existingAccount?.id, name: name, type: type, currency: currency, balance: balance, includeInNetWorth: includeInNetWorth, colorKey: colorKey); dismiss() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(!canSave) }.padding(22)
-            Divider()
-            Form {
-                TextField("账户名称", text: $name)
-                if nameInvalid {
-                    Text("请填写账户名称。").font(.caption).foregroundStyle(SavingsTheme.red)
-                }
+        WorkbenchEditorScaffold(
+            title: existingAccount == nil ? "新建账户" : "编辑账户",
+            subtitle: "账户余额与净资产分开核对，始终清楚。"
+        ) {
+            WorkbenchFormSection("账户信息") {
+                TextField("账户名称", text: $name).textFieldStyle(.roundedBorder)
+                if nameInvalid { Text("请填写账户名称。").font(.caption).foregroundStyle(SavingsTheme.red) }
                 Picker("账户类型", selection: $type) { ForEach(LedgerAccountType.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) } }
                 Picker("币种", selection: $currency) { ForEach(SavingsCurrency.allCases) { Text($0.displayName).tag($0) } }
+                Picker("标记色", selection: $colorKey) { ForEach(colors, id: \.self) { Text($0.capitalized).foregroundStyle(SavingsTheme.goalColor($0)).tag($0) } }
+            }
+            WorkbenchFormSection("余额与统计") {
                 TextField(type.isLiability ? "当前欠款" : "账户余额", value: $balance, format: .number.precision(.fractionLength(0...2)))
-                if balanceInvalid {
-                    Text("账户余额需要是不小于 0 的有效数字。").font(.caption).foregroundStyle(SavingsTheme.red)
-                }
+                    .textFieldStyle(.roundedBorder).font(.title3.monospacedDigit())
+                if balanceInvalid { Text("账户余额需要是不小于 0 的有效数字。").font(.caption).foregroundStyle(SavingsTheme.red) }
+                Toggle("计入净资产", isOn: $includeInNetWorth)
                 Text("修改余额会在记账中生成“余额调整”记录，不计入收支统计。")
                     .font(.caption).foregroundStyle(.secondary)
-                Toggle("计入净资产", isOn: $includeInNetWorth)
-                Picker("标记色", selection: $colorKey) { ForEach(colors, id: \.self) { Text($0.capitalized).foregroundStyle(SavingsTheme.goalColor($0)).tag($0) } }
-            }.formStyle(.grouped).padding(18)
-        }.frame(width: 500, height: 500)
-            .onAppear { if let existingAccount { balance = store.accountBalance(existingAccount) } }
+            }
+        } actions: {
+            Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+            Button("保存") { store.saveAccount(existingID: existingAccount?.id, name: name, type: type, currency: currency, balance: balance, includeInNetWorth: includeInNetWorth, colorKey: colorKey); dismiss() }
+                .buttonStyle(.borderedProminent).tint(SavingsTheme.accent).keyboardShortcut(.defaultAction).disabled(!canSave)
+        }
+        .frame(width: 570, height: 590)
+        .onAppear { if let existingAccount { balance = store.accountBalance(existingAccount) } }
     }
 }
 
@@ -972,40 +988,36 @@ private struct BudgetEditorView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("编辑月度预算").font(.title2.weight(.semibold))
-                    Text("\(selectedMonthKey) · \(currency.rawValue)").font(.caption).foregroundStyle(.secondary)
+        WorkbenchEditorScaffold(title: "编辑月度预算", subtitle: "\(selectedMonthKey) · \(currency.rawValue)") {
+            WorkbenchFormSection("月份与复制") {
+                Picker("编辑月份", selection: $selectedMonthKey) {
+                    Text("本月（\(initialMonthKey)）").tag(initialMonthKey)
+                    Text("下月（\(nextMonthKey)）").tag(nextMonthKey)
                 }
-                Spacer()
-                Button("取消") { dismiss() }
-                Button("保存") { save() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-            }.padding(22)
-            Divider()
-            Form {
-                Section {
-                    Picker("编辑月份", selection: $selectedMonthKey) {
-                        Text("本月（\(initialMonthKey)）").tag(initialMonthKey)
-                        Text("下月（\(nextMonthKey)）").tag(nextMonthKey)
-                    }
-                    .pickerStyle(.segmented)
-                    Button { copyFromPreviousMonth() } label: {
-                        Label("复制上月预算（\(previousMonthKey)）", systemImage: "doc.on.doc")
-                    }
-                    .disabled(!hasPreviousBudgets)
-                    Text("只填入所选月份尚未设置的分类，已填写的金额不会被覆盖；金额为 0 的分类不会写入预算。")
-                        .font(.caption).foregroundStyle(.secondary)
+                .pickerStyle(.segmented).labelsHidden()
+                Button { copyFromPreviousMonth() } label: {
+                    Label("复制上月预算（\(previousMonthKey)）", systemImage: "doc.on.doc")
                 }
+                .disabled(!hasPreviousBudgets)
+                Text("只填入尚未设置的分类，已填写金额不会被覆盖；0 元不写入预算。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            WorkbenchFormSection("分类预算") {
                 ForEach(categories) { category in
-                    HStack {
+                    HStack(spacing: 12) {
                         Label(category.name, systemImage: category.symbol).frame(width: 150, alignment: .leading)
-                        TextField("0", value: Binding(get: { amounts[category.id] ?? 0 }, set: { amounts[category.id] = $0 }), format: .number.precision(.fractionLength(0...2))).multilineTextAlignment(.trailing)
+                        Spacer()
+                        TextField("0", value: Binding(get: { amounts[category.id] ?? 0 }, set: { amounts[category.id] = $0 }), format: .number.precision(.fractionLength(0...2)))
+                            .multilineTextAlignment(.trailing).textFieldStyle(.roundedBorder).frame(width: 130)
                         Text(currency.symbol).foregroundStyle(.secondary)
                     }
                 }
-            }.formStyle(.grouped).padding(18)
-        }.frame(width: 520, height: 700)
+            }
+        } actions: {
+            Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+            Button("保存") { save() }.buttonStyle(.borderedProminent).tint(SavingsTheme.accent).keyboardShortcut(.defaultAction)
+        }
+        .frame(width: 590, height: 720)
         .onAppear { loadAmounts() }
         .onChange(of: selectedMonthKey) { _, _ in loadAmounts() }
     }

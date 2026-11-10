@@ -23,17 +23,23 @@ private struct MonthlyFinanceActions: View {
 }
 private struct MonthlyFinanceEditorFrame<Content: View>: View {
   @ObservedObject private var store = MonthlyFinanceStore.shared
+  @Environment(\.dismiss) private var dismiss
   let title: String
   let save: () -> Bool
   @ViewBuilder let fields: () -> Content
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      MonthlyFinanceActions(title: title, save: save)
-      Form { fields() }.formStyle(.grouped)
+    WorkbenchEditorScaffold(title: title, subtitle: "核对后保存，原业务记录与提醒规则保持不变。") {
+      Group { fields() }
+        .textFieldStyle(.roundedBorder)
       if let p = store.problem {
         Text(p).font(.callout).foregroundStyle(.red).textSelection(.enabled)
       }
-    }.padding(18).frame(minWidth: 480, idealWidth: 550, minHeight: 350, idealHeight: 590)
+    } actions: {
+      Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+      Button("保存") { if save() { dismiss() } }
+        .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).tint(SavingsTheme.accent)
+    }
+    .frame(minWidth: 560, idealWidth: 610, minHeight: 480, idealHeight: 650)
   }
 }
 
