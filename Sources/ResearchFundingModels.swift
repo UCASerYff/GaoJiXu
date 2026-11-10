@@ -136,7 +136,7 @@ enum ResearchFundingError: LocalizedError {
     case .schema: return "不支持该科研资金资料版本，原文件已保留。"
     case .invalidRecord: return "科研资金字段、月份或日期不完整，已停止处理。"
     case .conflict: return "科研资金项目、回收项或附件存在重复或冲突的标识。"
-    case .unavailable: return "科研资金资料缺失或无法读取，请检查已验证的备份。"
+    case .unavailable: return "科研资金资料缺失或无法读取，请检查现用资料目录。"
     case .changed: return "科研资金资料已经变化，请重新载入后再操作。"
     case .invalidPackage: return "科研资金迁移包的来源、摘要或结构无法核验。"
     case .unsafeAttachment: return "科研资金附件路径、大小或摘要不符，未提交迁移。"

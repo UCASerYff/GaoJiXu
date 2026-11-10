@@ -95,7 +95,7 @@ enum ResearchFundingAccess: Equatable { case awaitingAuthority, mayCreate, ready
       access = .ready
     } catch {
       access = .protected
-      message = "科研资金资料或迁移凭据无法核验。原资料已保留，请检查备份。"
+      message = "科研资金资料或迁移凭据无法核验。原资料已保留，请检查现用资料目录。"
     }
   }
 

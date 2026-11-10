@@ -114,7 +114,6 @@ final class SavingsStore: ObservableObject {
     }
 
     func apply(_ library: SavingsLibrary) {
-        backupLibraryBeforeMigration(fromVersion: library.version)
         lastLedgerAccountID = library.lastLedgerAccountID
         financesDirty = true
         goals = library.goals; records = library.records.sorted { $0.date > $1.date }
@@ -264,5 +263,5 @@ final class SavingsStore: ObservableObject {
 
 enum SavingsStoreError: LocalizedError {
     case unsupportedVersion
-    var errorDescription: String? { "该备份来自更高版本的搞积蓄，当前版本暂时无法恢复。" }
+    var errorDescription: String? { "资料由更高版本的搞积蓄写入，当前版本无法读取。" }
 }

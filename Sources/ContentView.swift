@@ -6,10 +6,8 @@ import UniformTypeIdentifiers
 extension Notification.Name {
     static let gaojixuNewLedgerEntry = Notification.Name("gaojixu.newLedgerEntry")
     static let gaojixuNewSavingsRecord = Notification.Name("gaojixu.newSavingsRecord")
-    static let gaojixuExportBackup = Notification.Name("gaojixu.exportBackup")
     static let gaojixuExportCSV = Notification.Name("gaojixu.exportCSV")
     static let gaojixuImportCSV = Notification.Name("gaojixu.importCSV")
-    static let gaojixuRestoreBackup = Notification.Name("gaojixu.restoreBackup")
     static let gaojixuSelectSection = Notification.Name("gaojixu.selectSection")
 }
 
@@ -23,7 +21,6 @@ struct ContentView: View {
     @SceneStorage("gqns.page.Savings") private var selection: SavingsSection = .overview
     @State private var showingRecordEditor = false
     @State private var ledgerEditorSession: LedgerEditorSession?
-    @State private var restoreCandidateURL: URL?
     @State private var csvImportContext: CSVImportContext?
     @State private var researchFundingRecordID: String?
     @AppStorage(GQNSLanguage.key) private var appLanguage = "system"
@@ -79,25 +76,6 @@ struct ContentView: View {
         } message: {
             Text(store.notice ?? "")
         }
-        .confirmationDialog(
-            tS("从备份恢复？", "Restore from backup?"),
-            isPresented: Binding(
-                get: { restoreCandidateURL != nil },
-                set: { if !$0 { restoreCandidateURL = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button(tS("覆盖并恢复", "Overwrite and Restore"), role: .destructive) {
-                if let url = restoreCandidateURL {
-                    restoreCandidateURL = nil
-                    performRestore(from: url)
-                }
-            }
-            Button(tS("取消", "Cancel"), role: .cancel) { restoreCandidateURL = nil }
-        } message: {
-            Text(tS("将用备份“\(restoreCandidateURL?.lastPathComponent ?? "")”覆盖当前全部数据，包括流水、账户、目标与冒险进度。此操作不可撤销。",
-                    "The backup “\(restoreCandidateURL?.lastPathComponent ?? "")” will replace all current data — transactions, accounts, goals and adventure progress. This cannot be undone."))
-        }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuNewLedgerEntry)) { _ in presentNewLedgerEntry() }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuNewSavingsRecord)) { _ in
             guard !store.activeGoals.isEmpty else {
@@ -110,10 +88,8 @@ struct ContentView: View {
             guard let info = note.userInfo, let paymentID = info["paymentID"] as? String else { return }
             PendingAutoLedger.recordConfirmed(paymentID, store: store)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .gaojixuExportBackup)) { _ in exportBackup() }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuExportCSV)) { _ in exportLedgerCSV() }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuImportCSV)) { _ in importLedgerCSV() }
-        .onReceive(NotificationCenter.default.publisher(for: .gaojixuRestoreBackup)) { _ in restoreBackup() }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("GaoSeries.savings.game"))) { _ in selection = .adventure }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuSelectSection)) { notification in
             guard let rawValue = notification.userInfo?["section"] as? String,
@@ -176,40 +152,6 @@ struct ContentView: View {
         case .researchFunding: ResearchFundingView(recordID: researchFundingRecordID)
         case .adventure: AdventureHubView()
         }
-    }
-
-    private func exportBackup() {
-        let panel = NSSavePanel()
-        panel.title = tS("导出搞积蓄完整备份", "Export Full Gao Savings Backup")
-        panel.nameFieldStringValue = "搞积蓄备份-\(backupDateString()).gaojixu"
-        panel.allowedContentTypes = [UTType(exportedAs: "com.gaojixu.backup", conformingTo: .archive)]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try store.backupData().write(to: url, options: .atomic)
-            store.notice = tS("完整备份已经导出。", "Full backup exported.")
-        } catch {
-            store.notice = tS("备份导出失败：\(error.localizedDescription)", "Backup export failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func restoreBackup() {
-        let panel = NSOpenPanel()
-        panel.title = tS("选择搞积蓄完整备份", "Choose a Gao Savings Backup")
-        panel.allowedContentTypes = [UTType(exportedAs: "com.gaojixu.backup", conformingTo: .archive)]
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        restoreCandidateURL = url
-    }
-
-    private func performRestore(from url: URL) {
-        do { try store.restore(from: Data(contentsOf: url)) }
-        catch { store.notice = tS("备份恢复失败：\(error.localizedDescription)", "Backup restore failed: \(error.localizedDescription)") }
-    }
-
-    private func backupDateString() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd-HHmm"
-        return formatter.string(from: Date())
     }
 
     private func exportLedgerCSV() {

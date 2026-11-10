@@ -70,10 +70,32 @@ def test_records_and_editors() -> None:
     require("store.save(" in research, "科研保存流程丢失")
 
 
+def test_backup_removal() -> None:
+    active = "\n".join(
+        path.read_text(encoding="utf-8")
+        for folder in ("Host", "Sources", "scripts")
+        for path in (ROOT / folder).rglob("*")
+        if path.is_file() and path.suffix in (".swift", ".sh", ".py")
+    )
+    for forbidden in (
+        "AppBackupExport", "AppBackupRestore", "gaojixu.exportBackup", "gaojixu.restoreBackup",
+        "rollback.noindex", "previous-program.zip", "ReconciliationBackups", "migration-backup",
+    ):
+        require(forbidden not in active, f"备份或回滚功能仍残留：{forbidden}")
+    for deleted in (
+        "Host/AppBackupExport.swift", "Host/AppBackupRestore.swift", "Host/BackupIntegrity.swift",
+        "Host/DailyBackup.swift", "Tests/BackupSafetyRegression.swift", "scripts/install_safety.py",
+    ):
+        require(not (ROOT / deleted).exists(), f"旧备份文件仍存在：{deleted}")
+    require("func snapshotData()" in active, "内部一致性快照编码入口缺失")
+    require("打开数据目录" in active and "打开小组件共享目录" in active, "现用数据目录入口被误删")
+
+
 def main() -> None:
     test_workspace_navigation()
     test_visual_system()
     test_records_and_editors()
+    test_backup_removal()
     print("Workbench structure regression: PASS")
 
 

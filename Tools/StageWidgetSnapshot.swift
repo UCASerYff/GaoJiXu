@@ -201,7 +201,7 @@ struct StageWidgetSnapshot {
                                  snapshotTargets: { [firstTarget, secondTarget] }, snapshotReloader: {})
         guard !store.loadFailed, store.hasLoadedValidLibrary else { throw StageError.isolatedLoadFailed }
         guard store.flushSave() else { throw StageError.isolatedSaveFailed }
-        try assertFinancialEquality(originalFinance, financialFields(store.backupData()))
+        try assertFinancialEquality(originalFinance, financialFields(store.snapshotData()))
 
         // The copy is rewritten during load. Restore source provenance before publishing the output.
         store.financialSourceSavedAt = identity.modifiedAt
@@ -211,7 +211,7 @@ struct StageWidgetSnapshot {
         guard !store.financesDirty, store.pendingWidgetSnapshot == nil, store.widgetSnapshotError == nil else {
             throw StageError.snapshotFailed
         }
-        try assertFinancialEquality(originalFinance, financialFields(store.backupData()))
+        try assertFinancialEquality(originalFinance, financialFields(store.snapshotData()))
         let snapshotData = try Data(contentsOf: firstTarget)
         guard snapshotData == (try Data(contentsOf: secondTarget)) else { throw StageError.snapshotMismatch }
         let snapshot = try JSONDecoder().decode(GaoJiXuWidgetSnapshot.self, from: snapshotData)

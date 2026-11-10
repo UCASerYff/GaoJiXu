@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-/// 持久化域：防抖保存、加载、沙盒旧档迁移、迁移前备份、完整备份恢复、小组件快照与事件日志。
+/// 持久化域：防抖保存、加载、沙盒旧档迁移、小组件快照与事件日志。
 extension SavingsStore {
     var libraryDirectory: URL {
         if let override = ProcessInfo.processInfo.environment["GAOJIXU_DATA_DIR"], !override.isEmpty {
@@ -24,31 +24,9 @@ extension SavingsStore {
         values[key]=id
         try encoder.encode(values).write(to:monthlyBindingsURL,options:.atomic)
     }
-    func protectLedgerBeforeReconciliation() throws {
-        let destination = libraryDirectory.appendingPathComponent("ReconciliationBackups",isDirectory:true)
-        try FileManager.default.createDirectory(at:destination,withIntermediateDirectories:true)
-        let backup = destination.appendingPathComponent("ledger-" + UUID().uuidString + ".json")
-        try encoder.encode(snapshot()).write(to:backup,options:.atomic)
-    }
-    func backupData() throws -> Data { try encoder.encode(snapshot()) }
-    func restore(from data: Data) throws {
-        let decoded = try decoder.decode(SavingsLibrary.self, from: data)
-        guard decoded.version <= Self.currentSchemaVersion else { throw SavingsStoreError.unsupportedVersion }
-        try validateFixedIncomeLibrary(decoded)
-        setLoadFailed(false)
-        apply(decoded)
-        if persistedFinancialFingerprint == nil {
-            persistedFinancialFingerprint = try financialFingerprint()
-            financialRevision = persistedFinancialFingerprint
-            financialUpdatedAt = decoded.financialUpdatedAt
-        }
-        hasLoadedValidLibrary = true
-        // 恢复的备份可能含有已到期的周期规则：与启动加载一致，恢复后立即物化一次。
-        materializeRecurringTransactions()
-        save()
-        guard flushSave() else { throw CocoaError(.fileWriteUnknown) }
-        notice = "完整备份已经恢复。"
-    }
+
+    /// 仅供隔离小组件工具比较业务字段，不写入任何备份文件。
+    func snapshotData() throws -> Data { try encoder.encode(snapshot()) }
 
     /// 轻量保存入口：标记脏数据并按防抖间隔合并写盘。
     /// 防抖间隔为 0 时保持同步立即写（测试与调试兼容）。
@@ -144,7 +122,7 @@ extension SavingsStore {
             // 读取失败时不落盘，避免覆盖原文件。
             setLoadFailed(true)
             hasLoadedValidLibrary = false
-            apply(Self.starterLibrary()); notice = "资料库读取失败，已进入只读保护。请从备份恢复；自动保存与战斗已暂停：\(error.localizedDescription)"
+            apply(Self.starterLibrary()); notice = "资料库读取失败，已进入只读保护；自动保存与战斗已暂停：\(error.localizedDescription)"
         }
     }
 
@@ -167,16 +145,6 @@ extension SavingsStore {
                 try fileManager.copyItem(at: legacyDirectory.appendingPathComponent(item), to: destination)
             }
         } catch { throw error }
-    }
-
-    /// 版本迁移写盘前，把磁盘上的旧存档留一份只读拷贝（已存在则不覆盖）。
-    func backupLibraryBeforeMigration(fromVersion version: Int) {
-        guard version < Self.currentSchemaVersion else { return }
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: libraryURL.path) else { return }
-        let backupURL = libraryDirectory.appendingPathComponent("library.migration-backup-v\(version).json")
-        guard !fileManager.fileExists(atPath: backupURL.path) else { return }
-        try? fileManager.copyItem(at: libraryURL, to: backupURL)
     }
 
     private func validateFixedIncomeLibrary(_ library: SavingsLibrary) throws {

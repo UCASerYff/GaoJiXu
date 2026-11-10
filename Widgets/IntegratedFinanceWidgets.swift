@@ -45,7 +45,7 @@ private struct IntegratedFinanceProvider: TimelineProvider {
                 do { try FileManager.default.createDirectory(at: diagnostics, withIntermediateDirectories: true); try data.write(to: diagnostics.appendingPathComponent(kind + "-" + String(describing: family) + "-" + phase + ".json"), options: .atomic) } catch { /* Read failures never change the business database. */ }
             }
             return .init(date: now, state: state, failure: nil)
-        } catch { return .init(date: now, state: nil, failure: "固定支出资料暂不可用，请打开搞积蓄检查迁移与备份。") }
+        } catch { return .init(date: now, state: nil, failure: "固定支出资料暂不可用，请打开搞积蓄检查现用资料。") }
     }
 }
 private struct IntegratedFinanceWidgetView: View {

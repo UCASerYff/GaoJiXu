@@ -15,13 +15,11 @@ extension SavingsStore {
         let valid = Set(payments.map { "auto-monthly|" + $0.id })
         let removed = ledgerEntries.filter { $0.id.hasPrefix("auto-monthly|") && !valid.contains($0.id) }
         if !removed.isEmpty {
-            // Preserve a recoverable financial snapshot before correcting old unconfirmed entries.
-            try protectLedgerBeforeReconciliation()
             let before = ledgerEntries
             ledgerEntries.removeAll { $0.id.hasPrefix("auto-monthly|") && !valid.contains($0.id) }
             financesDirty = true; save()
             guard flushSave() else { ledgerEntries = before; throw NSError(domain:"GQNS",code:2,userInfo:[NSLocalizedDescriptionKey:"对账保存失败，待重试"]) }
-            notice = "已撤销 \(removed.count) 笔未确认或已撤回的月供自动流水；原账本已备份。"
+            notice = "已撤销 \(removed.count) 笔未确认或已撤回的月供自动流水。"
         }
         var results: [String:String] = [:]
         for p in payments where !ignored.contains(p.id) {

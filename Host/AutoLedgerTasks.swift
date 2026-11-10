@@ -43,7 +43,7 @@ enum AutoLedgerTasks {
     static func loadChecked(expectExisting: Bool = false) throws -> [AutoLedgerTask] {
         do { _ = try FileManager.default.attributesOfItem(atPath: fileURL.path) }
         catch let e as NSError where e.domain == NSCocoaErrorDomain && (e.code == NSFileNoSuchFileError || e.code == NSFileReadNoSuchFileError) {
-            guard !expectExisting else { throw NSError(domain: "GaoJiXu.MonthlyTasks", code: 1, userInfo: [NSLocalizedDescriptionKey: "已有月供记账记录，但核对任务表缺失，自动对账已暂停。请检查备份。"] ) }
+            guard !expectExisting else { throw NSError(domain: "GaoJiXu.MonthlyTasks", code: 1, userInfo: [NSLocalizedDescriptionKey: "已有月供记账记录，但核对任务表缺失，自动对账已暂停。请检查现用资料。"] ) }
             return []
         }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601

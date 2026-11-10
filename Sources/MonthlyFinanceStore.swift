@@ -37,7 +37,7 @@ import WidgetKit
       scheduleReminders()
     } catch {
       state = nil
-      unavailable = "固定支出与权益资料未就绪。请先完成迁移，或检查资料与备份。\n" + error.localizedDescription
+      unavailable = "固定支出与权益资料未就绪。请先完成迁移，或检查现用资料。\n" + error.localizedDescription
     }
   }
   @discardableResult func update(_ body: (inout MonthlyFinanceState) throws -> Void) -> Bool {
