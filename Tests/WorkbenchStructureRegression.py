@@ -44,7 +44,7 @@ def test_workspace_navigation() -> None:
     require("sidebar" not in content.lower(), "旧侧栏仍残留")
     for deleted in (
         "Tests/ResearchFundingRegression.swift", "Tests/run_research_funding.zsh",
-        "Tests/Fixtures/ResearchFunding/research-funding-v1.json",
+        "Tests/Fixtures/ResearchFunding",
     ):
         require(not (ROOT / deleted).exists(), f"科研测试仍存在：{deleted}")
     migration = text("Sources/FinanceIntegrationMigration.swift")
