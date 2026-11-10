@@ -49,7 +49,7 @@ struct DataSettings: View {
     var body: some View {
         Form {
             Section("现用资料") {
-                Text("账本、固定收支、科研资金、游戏进度与附件继续保存在原位置。此处仅提供目录入口，不复制或改写资料。")
+                Text("账本、固定收支、游戏进度与附件继续保存在原位置。此处仅提供目录入口，不复制或改写资料。")
                 Button("打开数据目录") { reveal(AppDataLocations.appSupport) }
                 Button("打开小组件共享目录") { reveal(AppDataLocations.groupContainer) }
                 if !status.isEmpty { Text(status).textSelection(.enabled) }

@@ -5,7 +5,6 @@ enum SavingsWorkspace: String, CaseIterable, Identifiable {
     case overview
     case finances
     case savings
-    case research
     case adventure
 
     var id: String { rawValue }
@@ -15,7 +14,6 @@ enum SavingsWorkspace: String, CaseIterable, Identifiable {
         case .overview: tS("总览", "Overview")
         case .finances: tS("收支", "Finances")
         case .savings: tS("攒钱", "Savings")
-        case .research: tS("科研", "Research")
         case .adventure: tS("冒险", "Adventure")
         }
     }
@@ -25,7 +23,6 @@ enum SavingsWorkspace: String, CaseIterable, Identifiable {
         case .overview: "square.grid.2x2.fill"
         case .finances: "arrow.left.arrow.right.circle.fill"
         case .savings: "target"
-        case .research: "building.columns.fill"
         case .adventure: "map.fill"
         }
     }
@@ -35,7 +32,6 @@ enum SavingsWorkspace: String, CaseIterable, Identifiable {
         case .overview: [.overview]
         case .finances: [.ledger, .accounts, .budgets, .reports, .fixedIncome]
         case .savings: [.goals, .records, .analytics]
-        case .research: [.researchFunding]
         case .adventure: [.adventure]
         }
     }
@@ -45,7 +41,6 @@ enum SavingsWorkspace: String, CaseIterable, Identifiable {
         case .overview: .overview
         case .finances: .ledger
         case .savings: .goals
-        case .research: .researchFunding
         case .adventure: .adventure
         }
     }
@@ -55,7 +50,6 @@ enum SavingsWorkspace: String, CaseIterable, Identifiable {
         case .overview: .overview
         case .ledger, .accounts, .budgets, .reports, .fixedIncome, .fixedExpenses, .benefits: .finances
         case .goals, .records, .analytics: .savings
-        case .researchFunding: .research
         case .adventure: .adventure
         }
     }

@@ -18,19 +18,28 @@ def text(relative: str) -> str:
 def test_workspace_navigation() -> None:
     navigation = text("Sources/WorkspaceNavigation.swift")
     content = text("Sources/ContentView.swift")
-    for case in ("overview", "finances", "savings", "research", "adventure"):
+    for case in ("overview", "finances", "savings", "adventure"):
         require(f"case {case}" in navigation, f"缺少主工作区 {case}")
+    require("case research" not in navigation, "科研工作区仍残留")
+    require("researchFunding" not in navigation, "科研栏目映射仍残留")
     for section in (
         "overview", "ledger", "accounts", "budgets", "reports", "goals", "records",
-        "analytics", "fixedIncome", "fixedExpenses", "benefits", "researchFunding", "adventure",
+        "analytics", "fixedIncome", "fixedExpenses", "benefits", "adventure",
     ):
         require(f".{section}" in navigation, f"工作区未映射原栏目 {section}")
     for route in (
         'case "ledger"', 'case "overview"', 'case "budgets"', 'case "fixed-income"',
-        'case "fixed-expenses", "today"', 'case "benefits"', 'case "research-funding"',
+        'case "fixed-expenses", "today"', 'case "benefits"',
     ):
         require(route in content, f"旧深链分支被移除：{route}")
-    require("WorkbenchTopNavigation" in content, "缺少五项顶部导航")
+    require('case "research-funding"' not in content, "科研深链仍残留")
+    require("ResearchFundingView" not in content, "科研页面仍残留")
+    for deleted in (
+        "Sources/ResearchFundingModels.swift", "Sources/ResearchFundingStore.swift",
+        "Sources/ResearchFundingImport.swift", "Sources/ResearchFundingView.swift",
+    ):
+        require(not (ROOT / deleted).exists(), f"科研源码仍存在：{deleted}")
+    require("WorkbenchTopNavigation" in content, "缺少四项顶部导航")
     require("WorkbenchWorkspaceTabs" in content, "缺少页内子导航")
     require("sidebar" not in content.lower(), "旧侧栏仍残留")
 
@@ -54,12 +63,11 @@ def test_records_and_editors() -> None:
     finance = text("Sources/FinanceViews.swift")
     fixed_income = text("Sources/FixedIncomeView.swift")
     monthly = text("Sources/MonthlyFinanceEditors.swift")
-    research = text("Sources/ResearchFundingView.swift")
     require("LedgerDayGroup" in accounting, "流水未按日期分组")
     require("SavingsDayGroup" in finance, "积蓄记录未按日期分组")
     for name, source in (
         ("记账", accounting), ("积蓄", finance), ("固定收入", fixed_income),
-        ("固定支出", monthly), ("科研", research),
+        ("固定支出", monthly),
     ):
         require("WorkbenchEditorScaffold" in source, f"{name}编辑器未使用统一骨架")
     for preserved in (
@@ -67,7 +75,6 @@ def test_records_and_editors() -> None:
         "MonthlyFinanceEngine.savePayment", "MonthlyFinanceEngine.saveSubscription",
     ):
         require(preserved in accounting + finance + fixed_income + monthly, f"原保存流程丢失：{preserved}")
-    require("store.save(" in research, "科研保存流程丢失")
 
 
 def test_backup_removal() -> None:

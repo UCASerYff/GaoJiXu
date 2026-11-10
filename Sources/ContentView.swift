@@ -22,7 +22,6 @@ struct ContentView: View {
     @State private var showingRecordEditor = false
     @State private var ledgerEditorSession: LedgerEditorSession?
     @State private var csvImportContext: CSVImportContext?
-    @State private var researchFundingRecordID: String?
     @AppStorage(GQNSLanguage.key) private var appLanguage = "system"
 
     var body: some View {
@@ -129,10 +128,6 @@ struct ContentView: View {
         case "fixed-income": selection = .fixedIncome
         case "fixed-expenses", "today": selection = .fixedExpenses
         case "benefits": selection = .benefits
-        case "research-funding":
-            let values = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
-            researchFundingRecordID = values.first(where: { $0.name == "id" || $0.name == "sourceID" })?.value
-            selection = .researchFunding
         default: break
         }
     }
@@ -149,7 +144,6 @@ struct ContentView: View {
         case .records: RecordsView()
         case .analytics: AnalyticsView()
         case .fixedIncome, .fixedExpenses, .benefits: FixedFinanceWorkspace(selection: $selection)
-        case .researchFunding: ResearchFundingView(recordID: researchFundingRecordID)
         case .adventure: AdventureHubView()
         }
     }

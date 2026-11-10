@@ -1,12 +1,12 @@
 import Foundation
 import SwiftUI
 
-/// 侧栏主板块。V2.2 起游戏相关的六个页面收拢为单一 adventure 入口，
+/// 顶部工作台主板块。游戏相关的六个页面收拢为单一 adventure 入口，
 /// 由 AdventureHubView 内部的页签承载；rawValue 不参与持久化与小组件快照。
 enum SavingsSection: String, CaseIterable, Identifiable {
     case overview, ledger, accounts, budgets, reports
     case goals, records, analytics
-    case fixedIncome, fixedExpenses, benefits, researchFunding
+    case fixedIncome, fixedExpenses, benefits
     case adventure
 
     var id: String { rawValue }
@@ -23,7 +23,6 @@ enum SavingsSection: String, CaseIterable, Identifiable {
         case .fixedIncome: tS("固定收入", "Fixed income")
         case .fixedExpenses: tS("固定支出", "Fixed expenses")
         case .benefits: tS("权益管理", "Benefits")
-        case .researchFunding: tS("科研资金", "Research funding")
         case .adventure: tS("冒险成长", "Adventure")
         }
     }
@@ -40,7 +39,6 @@ enum SavingsSection: String, CaseIterable, Identifiable {
         case .fixedIncome: tS("配置月度收入计划，确认实际到账后记账", "Plan monthly income; record only confirmed receipts")
         case .fixedExpenses: tS("订阅、账单、支付历史与提醒", "Subscriptions, bills, payments and reminders")
         case .benefits: tS("独立权益与周期打卡", "Benefits and periodic claims")
-        case .researchFunding: tS("单独管理科研资助计划，不并入个人净资产", "Research funding plans kept separate from personal net worth")
         case .adventure: tS("战斗、装备、技能、宠物、祈愿与成就，全部免费游玩", "Battles, gear, techniques, pets, wishes and achievements — all free")
         }
     }
@@ -57,7 +55,6 @@ enum SavingsSection: String, CaseIterable, Identifiable {
         case .fixedIncome: "arrow.down.circle.fill"
         case .fixedExpenses: "calendar.badge.clock"
         case .benefits: "gift.fill"
-        case .researchFunding: "building.columns.fill"
         case .adventure: "map.fill"
         }
     }
