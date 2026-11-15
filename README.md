@@ -101,3 +101,7 @@ V4.01（构建 2）：将“月供 ↔ 记账核对”移至财务总览底部�
 版本以 `Info.plist` 为准。后续功能改动仅更新受影响的应用，默认版本 +0.01、构建号 +1；明确要求保持版本号的修订沿用原版本。先核验用户资料，再安装新程序并检查记录、附件和游戏进度，成功后清理旧程序、安装包与中间构建。程序资源与用户资料须分别处理，不能用清理构建目录的方式删除用户数据。
 
 第三方组件和资源保留各自许可，详情见 `Resources/` 中的许可、来源说明与补丁记录。
+
+## Windows 版
+
+Windows 10/11 x64 的独立版本在 [`windows/`](windows/README.md)。它使用 Python 标准库和本机浏览器界面，账本仍是 schema 24 的 `library.json`，固定支出沿用 `monthly.sqlite`。构建由 GitHub Actions 的 `windows-latest` 完成。功能对齐、运行方式和已知差异见 [windows/README.md](windows/README.md)。Windows 版使用 `%APPDATA%\GaoSeries\Savings\`，不读取 macOS 的 App Group，也不修改 Mac 版源码、签名或版本号。
