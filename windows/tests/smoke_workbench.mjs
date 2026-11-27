@@ -57,6 +57,10 @@ const click = selectors => js(`document.querySelector(${JSON.stringify(selectors
 const waitFor = selectors => until(() => js(`Boolean(document.querySelector(${JSON.stringify(selectors)}))`),selectors);
 const dialog = () => waitFor("dialog[open]");
 const close = () => until(() => js("!document.querySelector('dialog[open]')"),"editor closing");
+const confirmDecision = async () => {
+  await waitFor("#decision[open]");
+  await click("#decision-confirm");
+};
 const section = id => waitFor("#" + id + ":not([hidden]) h1");
 const fixed = (name,id = "") => '[data-fixed="' + name + '"]' + (id ? '[data-id="' + id + '"]' : "");
 const selectRoute = id => click('nav [data-route="' + id + '"]');
@@ -88,11 +92,24 @@ async function snapshot(name,width,height,dpi) {
 try {
   await cdp("Page.enable");
   await cdp("Runtime.enable");
+  let initialRequest;
+  await cdp("Fetch.enable",{patterns:[{urlPattern:"*/api/state"}]});
+  websocket.addEventListener("message", ({data}) => {
+    const message = JSON.parse(data);
+    if (message.method === "Fetch.requestPaused") initialRequest = message.params.requestId;
+  });
   await cdp("Page.navigate",{url:base});
+  await until(() => Boolean(initialRequest),"initial loading request");
+  await waitFor("#banner .state-spinner");
+  await cdp("Fetch.failRequest",{requestId:initialRequest,errorReason:"Failed"});
+  await cdp("Fetch.disable");
+  await waitFor('[data-workbench="retry"]');
+  await click('[data-workbench="retry"]');
   await waitFor('[data-workbench="create"]');
   await click('[data-workbench="create"]');
   await section("overview");
   await snapshot("overview-light-1360",1360,900,1);
+  assert.ok(await js("document.querySelector('.nav-rail').getBoundingClientRect().width >= 180"));
 
   await selectRoute("ledger");
   await waitFor('#ledger:not([hidden]) [name="ledger-query"]');
@@ -104,6 +121,15 @@ try {
   assert.equal(await js("state.summary.monthIncome"),0);
   await click(fixed("income-confirm"));
   const accountID = await js("state.accounts.find(account => account.currency === 'CNY').id");
+  await dialog();
+  await snapshot("fixed-income-editor-light-1100",1100,740,1.5);
+  await js(`(() => {
+    const form = document.querySelector("#editor-form");
+    form.elements.accountID.add(new Option("Invalid synthetic account","wrong-test-account",true,true));
+    form.elements.receivedIsConfirmed.checked = true;
+    form.requestSubmit();
+  })()`);
+  await waitFor("#editor-error:not([hidden])");
   await edit({accountID,receivedIsConfirmed:true});
   await textHas("#fixed-income","已入账");
   assert.equal(await js("state.summary.monthIncome"),1200);
@@ -111,6 +137,7 @@ try {
   await selectRoute("fixed-expenses");
   await waitFor(fixed("create-monthly"));
   await click(fixed("create-monthly"));
+  await confirmDecision();
   await section("fixed-expenses");
   await click(fixed("subscription-edit"));
   await edit({name:"QA 月卡",price:25,stacking:true});
@@ -156,6 +183,21 @@ try {
   await click('[data-settings="appearance"]');
   await edit({appearance:"dark"});
   await snapshot("benefits-dark-1060-150dpi",1060,730,1.5);
+  await selectRoute("fixed-expenses");
+  await section("fixed-expenses");
+  await click(fixed("expense-tab","bills"));
+  await snapshot("fixed-expenses-dark-1060",1060,730,1.5);
+  await click('.toolbar-menu summary');
+  await click('#toolbar [data-workbench="settings"]');
+  await dialog();
+  await click('[data-settings="appearance"]');
+  await snapshot("settings-dark-small-480",480,650,1.5);
+  assert.equal(await js("getComputedStyle(document.querySelector('.workspaces')).gridTemplateColumns.split(' ').length"),4);
+  await cdp("Input.dispatchKeyEvent",{type:"keyDown",key:"Tab",code:"Tab",windowsVirtualKeyCode:9});
+  await cdp("Input.dispatchKeyEvent",{type:"keyUp",key:"Tab",code:"Tab",windowsVirtualKeyCode:9});
+  assert.ok(await js("document.activeElement.matches(':focus-visible') && getComputedStyle(document.activeElement).outlineStyle !== 'none'"));
+  await click("#editor-close");
+  await close();
 
   await click(".toolbar-menu summary");
   await click('[data-workbench="widgets"]');
@@ -169,7 +211,10 @@ try {
   await cdp("Page.navigate",{url:base + "#fixed-expenses"});
   await section("fixed-expenses");
   await click(fixed("expense-tab","payments"));
+  await waitFor(".fixed-item-menu summary");
+  await click(".fixed-item-menu summary");
   await click(fixed("payment-delete"));
+  await confirmDecision();
   await textHas("#fixed-expenses","还没有已核实的支付");
   assert.equal(await js("state.summary.monthExpense"),0);
 

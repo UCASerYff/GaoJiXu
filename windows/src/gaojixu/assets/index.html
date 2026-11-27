@@ -7,6 +7,7 @@
   <meta name="gao-version" content="{{VERSION}}">
   <link rel="icon" href="/assets/mac/GaoJiXuIcon.png">
   <link rel="stylesheet" href="/assets/workbench.css">
+  <link rel="stylesheet" href="/assets/fixed.css">
   <link rel="stylesheet" href="/assets/widgets.css">
   <link rel="stylesheet" href="/assets/finance.css">
   <link rel="stylesheet" href="/assets/adventure.css">
@@ -19,20 +20,25 @@
   <title>搞积蓄</title>
 </head>
 <body>
-  <header class="app-chrome">
-    <div class="topbar">
-      <div class="brand">
-        <img src="/assets/mac/GaoJiXuIcon.png" width="38" height="38" alt="">
-        <div><strong id="brand-name">搞积蓄</strong><small id="brand-tagline">我的财务工作台</small></div>
+  <div id="app-frame">
+    <header class="app-chrome">
+      <div class="nav-rail">
+        <div class="brand">
+          <img src="/assets/mac/GaoJiXuIcon.png" width="36" height="36" alt="">
+          <strong id="brand-name">搞积蓄</strong>
+        </div>
+        <nav id="workspaces" class="workspaces" aria-label="工作台"></nav>
+        <div class="subbar" id="subbar" hidden><nav id="sections" aria-label="工作区内容"></nav></div>
+        <div id="rail-tools" class="rail-tools" hidden></div>
       </div>
-      <nav id="workspaces" class="workspaces" aria-label="工作台"></nav>
-      <div class="toolbar" id="toolbar"></div>
-    </div>
-    <div class="subbar" id="subbar" hidden><nav id="sections" class="segmented" aria-label="工作区内容"></nav></div>
-    <div class="subbar fixed-bar" id="fixed-bar" hidden><nav id="fixed-sections" class="segmented" aria-label="固定收支类型"></nav></div>
-  </header>
-  <main id="workbench">
-    <div id="banner" class="banner" role="status" hidden></div>
+      <div class="topbar">
+        <div class="open-context"><span id="context-workspace"></span><span id="context-section" hidden></span></div>
+        <div class="toolbar" id="toolbar"></div>
+      </div>
+    </header>
+    <main id="workbench">
+      <div id="banner" class="banner app-state" role="status"><span class="state-spinner" aria-hidden="true"></span><strong>正在读取资料…</strong></div>
+      <div class="subbar fixed-bar" id="fixed-bar" hidden><nav id="fixed-sections" aria-label="固定收支类型"></nav></div>
     <section id="overview" hidden></section>
     <section id="ledger" hidden></section>
     <section id="accounts" hidden></section>
@@ -46,13 +52,28 @@
     <section id="analytics" hidden></section>
     <section id="adventure" hidden></section>
     <section id="widgets" hidden></section>
-  </main>
+    </main>
+  </div>
+  <aside id="feedback" class="app-feedback" role="alert" hidden>
+    <div class="feedback-copy"><strong id="feedback-title"></strong><p id="feedback-content"></p></div>
+    <button id="feedback-dismiss" class="icon-button ghost" type="button" aria-label="关闭">×</button>
+  </aside>
   <dialog id="editor" aria-labelledby="editor-title">
     <form id="editor-form">
-      <div class="editor-header"><h2 id="editor-title"></h2><p id="editor-subtitle"></p></div>
+      <div class="editor-header">
+        <div><h2 id="editor-title"></h2><p id="editor-subtitle"></p></div>
+        <button id="editor-close" class="icon-button ghost" type="button" aria-label="关闭">×</button>
+      </div>
       <div id="editor-content" class="editor-content"></div>
       <div id="editor-error" role="alert" hidden></div>
       <div class="editor-actions"><button id="editor-cancel" class="ghost" type="button"></button><button id="editor-submit" type="submit"></button></div>
+    </form>
+  </dialog>
+  <dialog id="decision" aria-labelledby="decision-title" aria-describedby="decision-content">
+    <form method="dialog">
+      <div class="editor-header"><div><h2 id="decision-title"></h2></div></div>
+      <div class="editor-content"><p id="decision-content"></p></div>
+      <div class="editor-actions"><button id="decision-cancel" class="ghost" value="cancel" autofocus></button><button id="decision-confirm" class="danger" value="confirm"></button></div>
     </form>
   </dialog>
 </body>

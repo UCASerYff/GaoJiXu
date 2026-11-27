@@ -53,6 +53,7 @@ try {
     await until(() => read("Boolean(document.querySelector('.widget-tile') && !document.querySelector('[data-window-pin]').hidden)"),
                 "attached widget content and pin control");
     assert.equal(await read("document.title.includes('[GJX:')"),false);
+    assert.ok(await read("document.documentElement.scrollWidth - innerWidth") <= 1,"widget should not require horizontal scrolling");
   }
   assert.equal(await expenses("document.querySelector('.widget-expenses').textContent.includes('Synthetic plan')"),true);
   assert.equal(await benefits("Boolean(document.querySelector('.widget-claim'))"),true);
@@ -65,6 +66,9 @@ try {
   await until(() => benefits("!document.querySelector('.widget-claim')"),"claim commits through the authoritative loopback service");
   await calendar("api('/api/ledger/save',{kind:'income',accountID:state.accounts[0].id,categoryID:'salary-income',amount:31.45})",true);
   await until(() => calendar("[...document.querySelectorAll('.widget-day')].some(node => /31\\.45/.test(node.title))"),"calendar income updated");
+  await calendar("[...document.querySelectorAll('.widget-day')].find(node=>/31\\.45/.test(node.title)).click()");
+  assert.equal(await calendar("/31\\.45/.test(document.querySelector('.widget-calendar-summary').textContent)"),true);
+  assert.equal(await calendar("document.querySelectorAll('.widget-day[aria-pressed=true]').length"),1);
   await until(() => worth("/31\\.45/.test(document.querySelector('.widget-value').textContent)"),"separate net worth window updated");
   await until(() => adventure("state.adventure.attackCount > " + initialAttacks),"battle progress updates in separate observation window");
   console.log("widget DOM: five connected, Win32-backed pin actions, claim, calendar/net-worth propagation, fixed expense and live adventure progress verified");

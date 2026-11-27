@@ -52,6 +52,27 @@ def test_report_values_match_the_live_ledger_and_split_original_currencies(tmp_p
     assert usd_summary["days"][1]["expense"] == 2
 
 
+def test_selected_calendar_month_and_day_filter_preserve_overview_period(tmp_path):
+    store = library(tmp_path)
+    cash = store.doc["accounts"][0]["id"]
+    for when, amount in [("2026-10-08", 24.75), ("2026-10-09", 8), ("2026-11-08", 13)]:
+        dispatch(store, "/api/ledger/save", {"kind": "expense", "accountID": cash, "amount": amount,
+                                             "categoryID": "food", "date": when, "note": "午饭"})
+    overview = finance_views.view(store, {"route": ["overview"], "calendarMonth": ["2026-10"]})
+    assert overview["month"] == "2026-11"
+    assert overview["calendarMonth"] == "2026-10"
+    assert overview["expense"] == 13
+    assert overview["days"][7]["expense"] == 24.75
+    day = finance_views.view(store, {"route": ["ledger"], "day": ["2026-10-08"], "q": ["午饭"]})
+    assert day["total"] == 1
+    assert day["items"][0]["date"].startswith("2026-10-08")
+    assert day["subtotals"]["CNY"]["expense"] == 24.75
+    with pytest.raises(AppError):
+        finance_views.view(store, {"route": ["ledger"], "day": ["2026-02-30"]})
+    with pytest.raises(AppError):
+        finance_views.view(store, {"route": ["overview"], "calendarMonth": ["2026-13"]})
+
+
 def test_budget_batch_rejects_an_invalid_category_before_writing(tmp_path):
     store = library(tmp_path)
     request = {"monthKey": "2026-11", "currency": "CNY"}

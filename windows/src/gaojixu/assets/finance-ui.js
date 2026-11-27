@@ -3,6 +3,7 @@
   const h = escapeHTML;
   const viewOptions = {overview: {}, ledger: {}, budgets: {}, reports: {}, records: {}, analytics: {}};
   const requests = new Map();
+  let selectedCalendarDay = "";
   const colors = ["blue", "teal", "green", "orange", "purple", "red"];
   const goalSymbols = [["flag.checkered", "目标", "Goal"], ["airplane", "旅行", "Travel"], ["laptopcomputer", "电脑", "Computer"],
     ["house.fill", "住房", "Home"], ["car.fill", "汽车", "Car"], ["cross.case.fill", "健康", "Health"], ["graduationcap.fill", "学业", "Education"],
@@ -72,7 +73,11 @@
   const badge = (text, color = "blue") => `<span class="pill finance-badge tone-${colorKey(color)}">${h(text)}</span>`;
   const labelForDay = day => day === today() ? t(`今天 · ${day}`, `Today · ${day}`) : day === offsetDay(today(), -1) ? t(`昨天 · ${day}`, `Yesterday · ${day}`) : day;
   const currencyPicker = (view, compact = false) => select("finance-currency", currencyOptions(viewOptions[view].currency || state.currency, compact), `aria-label="${h(t("统计币种", "Currency"))}"`);
-  const switchCurrency = (root, view) => root.querySelector('[name="finance-currency"]')?.addEventListener("change", event => {viewOptions[view].currency = event.target.value; render(view);});
+  const switchCurrency = (root, view) => root.querySelector('[name="finance-currency"]')?.addEventListener("change", event => {
+    viewOptions[view].currency = event.target.value;
+    render(view);
+    root.querySelector('[name="finance-currency"]')?.focus({preventScroll:true});
+  });
 
   async function readView(root, view, apply) {
     const parameters = new URLSearchParams({route: view, currency: state.currency, ...viewOptions[view]});
@@ -91,18 +96,72 @@
       if (root.financeTicket === ticket && !root.hidden) apply(null, error);
     }
   }
-  const viewFailure = error => empty(t("无法读取数据", "Could not load data"), error?.message, "exclamationmark.triangle");
+  const loading = () => `<div class="card finance-loading" role="status"><span aria-hidden="true"></span>${t("正在读取本地账目…", "Reading local records…")}</div>`;
+  const viewFailure = error => `<div class="card finance-failed" role="status">${empty(t("无法读取数据", "Could not load data"), error?.message,
+    "exclamationmark.triangle",action("retry",t("重试","Retry"),"","ghost"))}</div>`;
+
+  const calendarDate = (month, day) => `${month}-${String(day).padStart(2, "0")}`;
+  const calendarMovements = [
+    ["income", "收入", "Income", "green", "+"],
+    ["expense", "支出", "Expense", "red", "−"],
+    ["saving", "积蓄", "Savings", "teal", ""]
+  ];
+
+  function movementAmount(value, currency, positive) {
+    const sign = value < 0 ? "−" : Math.abs(value) < 0.001 ? "" : positive;
+    return sign + money(Math.abs(value), currency);
+  }
+
+  function calendarDaySummary(model, currency) {
+    const values = model.days.find(row => calendarDate(model.calendarMonth, row.day) === selectedCalendarDay);
+    return `<div class="finance-calendar-selected-date"><strong>${h(labelForDay(selectedCalendarDay))}</strong>
+      ${action("calendar-ledger", t("查看当天流水", "Transactions on this date"), "list.bullet", "ghost finance-calendar-link")}</div>
+      <div class="finance-calendar-day-totals">${calendarMovements.map(([key, zh, en, color, sign]) =>
+        `<div><span>${t(zh,en)}</span><strong class="finance-movement tone-${color}">${h(movementAmount(values?.[key] ?? 0,currency,sign))}</strong></div>`).join("")}</div>`;
+  }
 
   function financeCalendar(model, currency) {
-    const weekdays = t(["日", "一", "二", "三", "四", "五", "六"], ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
-    const firstDay = new Date(`${model.month}-01T12:00:00`).getDay();
-    const compact = (value, prefix) => Math.abs(value) < .005 ? "·" : `${prefix}${value < 0 ? "−" : ""}${Math.abs(value) >= 100 ? Math.round(Math.abs(value)) : Math.abs(value).toFixed(2)}`;
-    const totals = model.days.reduce((acc, day) => [acc[0]+day.expense, acc[1]+day.income, acc[2]+day.saving], [0, 0, 0]);
-    return `<div class="finance-calendar-body"><div class="finance-calendar-legend"><span class="tone-red">${h(t("支出", "Expense") + " −" + money(totals[0], currency))}</span><span class="tone-green">${h(t("收入", "Income") + " +" + money(totals[1], currency))}</span><span class="tone-orange">${h(t("积蓄", "Saved") + " ～" + money(totals[2], currency))}</span><span class="muted">${h(currency)}</span></div><div class="finance-calendar">${weekdays.map(day => `<span class="weekday">${h(day)}</span>`).join("")}${"<span></span>".repeat(firstDay)}${model.days.map(day => {
-      const date = `${model.month}-${String(day.day).padStart(2, "0")}`;
-      const label = `${date} · ${t("支出", "Expense")} ${money(day.expense, currency)} · ${t("收入", "Income")} ${money(day.income, currency)} · ${t("积蓄", "Saved")} ${money(day.saving, currency)}`;
-      return `<div class="finance-calendar-day${date > model.date ? " future" : ""}" tabindex="0" aria-label="${h(label)}" title="${h(label)}"><strong>${day.day}</strong><span class="tone-red">${h(compact(day.expense,"−"))}</span><span class="tone-green">${h(compact(day.income,"+"))}</span><span class="tone-orange">${h(compact(day.saving,"～"))}</span></div>`;
-    }).join("")}</div></div>`;
+    const month = model.calendarMonth;
+    const weekdays = t(["周日", "周一", "周二", "周三", "周四", "周五", "周六"], ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
+    const firstDay = new Date(`${month}-01T12:00:00`).getDay();
+    const dayLabels = new Intl.DateTimeFormat(t("zh-CN","en-US"), {dateStyle:"full"});
+    const smallAmount = new Intl.NumberFormat(t("zh-CN","en-US"), {maximumFractionDigits:["JPY","KRW","VND"].includes(currency) ? 0 : 2});
+    const compactAmount = new Intl.NumberFormat(t("zh-CN","en-US"), {notation:"compact", maximumFractionDigits:1});
+    const direction = [
+      ["calendar-prev", "chevron.left", t("上个月", "Previous month")],
+      ["calendar-next", "chevron.right", t("下个月", "Next month")]
+    ];
+    const steps = direction.map(([id,symbol,label]) => `<button class="ghost finance-calendar-step" type="button" aria-label="${h(label)}" title="${h(label)}" data-finance="${id}">${icon(symbol)}</button>`);
+    return `<div class="finance-calendar-header"><h2>${t("收支月历", "Cash flow calendar")}</h2><div class="finance-calendar-controls">
+      ${steps[0]}<strong class="finance-calendar-month">${h(monthLabel(month,true))}</strong>${steps[1]}
+      ${action("calendar-today",t("今天","Today"),"","ghost finance-calendar-today")}</div></div>
+      <div class="finance-calendar-calendar" role="group" aria-label="${h(t("选择日期","Choose a date"))}">${weekdays.map(day =>
+        `<span class="finance-calendar-weekday" aria-hidden="true">${h(day)}</span>`).join("")}${'<span aria-hidden="true"></span>'.repeat(firstDay)}${model.days.map(day => {
+      const date = calendarDate(month,day.day);
+      const active = date === selectedCalendarDay;
+      const amountLabel = calendarMovements.map(([key,zh,en,,sign]) => `${t(zh,en)} ${movementAmount(day[key],currency,sign)}`).join(" · ");
+      const label = `${dayLabels.format(new Date(`${date}T12:00:00`))} · ${amountLabel}`;
+      return `<button class="finance-calendar-day${date === model.date ? " is-today" : ""}${date > model.date ? " is-future" : ""}" type="button" data-finance="calendar-day" data-value="${h(date)}"
+        aria-label="${h(label)}" title="${h(label)}" aria-pressed="${active}" tabindex="${active ? 0 : -1}"${date === model.date ? ' aria-current="date"' : ""}>
+        <span class="finance-calendar-number">${day.day}</span><span class="finance-calendar-activity" aria-hidden="true">${calendarMovements.map(([key,,,color,sign]) => {
+          const number = day[key];
+          if (!number) return "";
+          const format = Math.abs(number) >= 10000 ? compactAmount : smallAmount;
+          return `<span class="finance-calendar-mark tone-${color}"><i></i><span>${h((number < 0 ? "−" : sign) + format.format(Math.abs(number)))}</span></span>`;
+        }).join("")}</span></button>`;
+    }).join("")}</div><div class="finance-calendar-selection" data-calendar-selection>${calendarDaySummary(model,currency)}</div>`;
+  }
+
+  function selectCalendarDay(root, model, currency, date, focus = false) {
+    const next = root.querySelector(`[data-finance="calendar-day"][data-value="${date}"]`);
+    if (!next) return;
+    const current = root.querySelector('[data-finance="calendar-day"][aria-pressed="true"]');
+    if (current) {current.setAttribute("aria-pressed","false"); current.tabIndex = -1;}
+    selectedCalendarDay = date;
+    next.setAttribute("aria-pressed","true");
+    next.tabIndex = 0;
+    root.querySelector("[data-calendar-selection]").innerHTML = calendarDaySummary(model,currency);
+    if (focus) next.focus({preventScroll:true});
   }
 
   function rootActions(root, handlers) {
@@ -110,13 +169,34 @@
       const button = event.target.closest("[data-finance]");
       if (!button || !root.contains(button) || button.disabled) return;
       if (button.dataset.finance === "go") {navigate(button.dataset.value); return;}
+      if (button.dataset.finance === "retry") {render(root.id); return;}
       const handler = handlers[button.dataset.finance];
       if (handler) Promise.resolve().then(() => handler(button.dataset.value, button)).catch(showError);
     };
   }
 
-  function renderOverview(root) {
-    root.innerHTML = heading(t("财务总览", "Financial overview"), t("看清今天的资产，也安排好下一个月。", "A clear view of today, with next month under control."), currencyPicker("overview", true)) + '<div data-finance-result class="finance-stack"></div>';
+  function overviewSummary(model, currency) {
+    return `<article class="card finance-summary">
+      <div class="finance-summary-primary"><span>${t("净资产", "Net worth")}</span><strong>${h(money(model.netWorth,currency))}</strong></div>
+      <dl class="finance-summary-metrics">
+        <div><dt>${t("本月收入", "Income this month")}</dt><dd class="finance-movement tone-green">${h(movementAmount(model.income,currency,"+"))}</dd></div>
+        <div><dt>${t("本月支出", "Expenses this month")}</dt><dd class="finance-movement tone-red">${h(movementAmount(model.expense,currency,"−"))}</dd></div>
+        <div><dt>${t("已分配积蓄", "Allocated savings")}</dt><dd>${h(money(model.allocated,currency))}</dd></div>
+      </dl></article>`;
+  }
+
+  function overviewBudget(model,currency) {
+    if (!model.budget) return `<div class="finance-brief"><span class="muted">${t("本月尚未设置额度", "No budget set for this month")}</span>${link("budgets",t("设置预算","Set a budget"))}</div>`;
+    const remaining = model.budget - model.expense;
+    const color = remaining < 0 ? "red" : "teal";
+    return `<div class="finance-brief"><span class="muted">${remaining < 0 ? t("超出预算","Over budget") : t("剩余额度","Available")}</span>
+      <strong class="finance-movement tone-${color}">${h(money(Math.abs(remaining),currency))}</strong></div>
+      ${progress(model.expense/model.budget,color)}<div class="finance-brief muted"><span>${t("已使用", "Spent")} ${h(money(model.expense,currency))}</span><span>${t("预算", "Budget")} ${h(money(model.budget,currency))}</span></div>`;
+  }
+
+  function renderOverview(root, focus = "") {
+    root.innerHTML = heading(t("财务总览", "Financial overview"), "", currencyPicker("overview", true)) +
+      '<div data-finance-result class="finance-stack">' + loading() + '</div>';
     switchCurrency(root, "overview");
     readView(root, "overview", (model, error) => {
       const output = root.querySelector("[data-finance-result]");
@@ -125,24 +205,57 @@
       const worthAccounts = activeAccounts().filter(account => account.currency === currency && account.includeInNetWorth).sort((a,b) => b.contribution - a.contribution);
       const goal = activeGoals().find(item => item.currency === currency);
       const reward = state.adventure;
-      output.innerHTML = (window.GaoFixed?.pending?.() || "") + tiles([
-        tile(t("净资产", "Net worth"), money(model.netWorth, currency), "building.columns.fill", "blue"),
-        tile(t("本月收入", "Income this month"), money(model.income, currency), "arrow.down.left", "green"),
-        tile(t("本月支出", "Expenses this month"), money(model.expense, currency), "arrow.up.right", "red"),
-        tile(t("已分配积蓄", "Allocated savings"), money(model.allocated, currency), "target", "purple")].join("")) +
-        `<div class="finance-overview-pair">${panel(t("账户速览", "Accounts"), "wallet.pass.fill", `<div class="finance-worth"><small class="muted">${t("净资产", "Net worth")}</small><strong>${h(money(model.netWorth, currency))}</strong></div>${worthAccounts.length ? worthAccounts.slice(0,4).map(account => `<div class="finance-account-mini"><span class="tone-${colorKey(account.colorKey)}">${icon(account.symbol)}</span><div><strong>${h(account.name)}</strong><small>${h(accountType(account.type))}</small></div><span class="finance-number">${h(money(account.contribution, currency))}</span></div>`).join("") : empty(t("还没有计入净资产的账户", "No accounts in net worth"), "", "wallet.pass.fill")}${worthAccounts.length > 4 ? `<small class="muted">${h(t(`按净资产贡献排序 · 共 ${worthAccounts.length} 个账户`, `Sorted by contribution · ${worthAccounts.length} accounts`))}</small>` : ""}`, link("accounts"))}
-        ${panel(t("本月预算", "Budget"), "gauge.with.dots.needle.67percent", model.budget > 0 ? `<div class="finance-line"><span>${t("已用", "Spent")}</span><strong>${h(money(model.expense,currency))} / ${h(money(model.budget,currency))}</strong></div>${progress(model.expense / model.budget, model.expense > model.budget ? "red" : "green")}<small class="muted">${t(model.expense > model.budget ? "已超出预算，建议复盘分类" : "预算仍在计划内", model.expense > model.budget ? "Over budget — review categories" : "On track")}</small>` : `<strong>${t("尚未设置预算", "No budget set")}</strong><small class="muted">${t("设置分类预算，掌握每月可花空间", "Set category budgets to track monthly room")}</small>`, link("budgets"))}</div>
-        <div class="finance-overview-pair">${panel(t("最近流水", "Recent transactions"), "list.bullet.rectangle", model.recent.length ? model.recent.map(row => ledgerRow(row, true)).join("") : empty(t("还没有流水", "No transactions yet"), "", "square.and.pencil"), link("ledger"))}
-        ${panel(t("当前目标", "Current goal"), "target", goal ? `<div class="finance-line"><span class="tone-${colorKey(goal.colorKey)}">${icon(goal.symbol)} <strong>${h(goal.title)}</strong></span><strong>${Math.trunc(goal.progress*100)}%</strong></div>${progress(goal.progress, goal.colorKey)}<span>${h(money(goal.balance, goal.currency))} / ${h(money(goal.targetAmount, goal.currency))}</span><small class="muted">${t("积蓄记录会同步生成账户转账，不会重复计入日常收支。", "Savings records create account transfers and stay separate from daily income and expenses.")}</small>` : empty(t("还没有进行中的目标", "No current goal")), link("goals"))}</div>
-        ${reward ? panel(t("勇者冒险", "Hero adventure"), "map.fill", `<div class="finance-adventure-scene" data-adventure-observation></div><div class="finance-adventure"><div><strong>${h(t(`等级 ${reward.level} · ${reward.monster || ""}`, `Level ${reward.level} · ${reward.english?.monster || reward.monster || ""}`))}</strong><small class="muted">${h(t(`金币 ${state.summary.coins || 0} · 星券 ${state.summary.tickets || 0}`, `${state.summary.coins || 0} coins · ${state.summary.tickets || 0} tickets`))}</small></div></div>`, link("adventure")) : ""}
-        <details class="card finance-panel finance-calendar-card"${localStorage.getItem("gao.calendar.expanded") === "1" ? " open" : ""}><summary>${icon("calendar")}${t("本月每日收支与积蓄", "Daily income, expenses and savings")}</summary>${financeCalendar(model,currency)}</details>` +
+      const month = model.calendarMonth;
+      if (!selectedCalendarDay.startsWith(month + "-")) selectedCalendarDay = model.date.startsWith(month + "-") ? model.date : month + "-01";
+
+      const budget = panel(t("本月预算", "Monthly budget"), "", overviewBudget(model,currency), model.budget ? link("budgets",t("预算明细","Budget details")) : "");
+      const accounts = panel(t("账户余额", "Account balances"), "", worthAccounts.length ? worthAccounts.slice(0,4).map(account => `<div class="finance-account-mini"><span class="finance-icon tone-${colorKey(account.colorKey)}">${icon(account.symbol)}</span><strong>${h(account.name)}</strong><span class="finance-number">${h(money(account.contribution,currency))}</span></div>`).join("") :
+        `<p class="muted">${t("当前币种没有计入净资产的账户。", "No accounts are included in net worth for this currency.")}</p>`, link("accounts",t("账户管理","Manage accounts")));
+      const goalSummary = panel(t("攒钱进度", "Savings progress"), "", goal ? `<div class="finance-brief"><strong>${h(goal.title)}</strong><strong class="finance-number">${Math.trunc(goal.progress*100)}%</strong></div>${progress(goal.progress,goal.colorKey)}
+        <div class="finance-brief muted"><span>${h(money(goal.balance,goal.currency))}</span><span>${h(money(goal.targetAmount,goal.currency))}</span></div>` :
+        `<p class="muted">${t("当前币种没有进行中的目标。", "No active savings goals in this currency.")}</p>`, link("goals",t("攒钱目标","Savings goals")));
+      const adventure = reward ? panel(t("勇者冒险", "Hero adventure"), "", `<div class="finance-adventure-scene" data-adventure-observation></div><div class="finance-adventure"><div><strong>${h(t(`等级 ${reward.level} · ${reward.monster || ""}`, `Level ${reward.level} · ${reward.english?.monster || reward.monster || ""}`))}</strong><small class="muted">${h(t(`金币 ${state.summary.coins || 0} · 星券 ${state.summary.tickets || 0}`, `${state.summary.coins || 0} coins · ${state.summary.tickets || 0} tickets`))}</small></div></div>`,
+        link("adventure",t("打开冒险","Open adventure")), "finance-observation") : "";
+      const recent = panel(t("最近流水", "Recent transactions"), "", model.recent.length ?
+        `<div class="finance-recent-list">${model.recent.map(row => ledgerRow(row,true)).join("")}</div>` :
+        empty(t("还没有流水", "No transactions yet"), "", "square.and.pencil", action("overview-record",t("记一笔账", "New transaction"),"plus","ghost")), link("ledger",t("全部流水","All transactions")), "finance-recent");
+      output.innerHTML = overviewSummary(model,currency) + (window.GaoFixed?.pending?.() || "") +
+        `<div class="finance-overview-grid"><div class="finance-overview-main">
+          <article class="card finance-panel finance-calendar-card">${financeCalendar(model,currency)}</article>${recent}</div>
+          <aside class="finance-overview-side" aria-label="${t("财务概况", "Financial details")}">${budget}${accounts}${goalSummary}${adventure}</aside></div>` +
         (window.GaoFixed?.reconciliation?.() || "");
-      output.querySelector("details")?.addEventListener("toggle", event => localStorage.setItem("gao.calendar.expanded", event.target.open ? "1" : "0"));
       window.GaoFixed?.bindReconciliation?.(output);
       const observation = output.querySelector("[data-adventure-observation]");
       if (observation && reward) window.renderAdventureObservation?.(observation, reward);
+
+      const showMonth = (next, focus) => {
+        viewOptions.overview.calendarMonth = next;
+        if (next === model.date.slice(0,7)) selectedCalendarDay = model.date;
+        renderOverview(root,focus);
+      };
+      rootActions(root,{
+        "calendar-day": date => selectCalendarDay(root,model,currency,date),
+        "calendar-prev": () => showMonth(offsetMonth(month,-1),"calendar-prev"),
+        "calendar-next": () => showMonth(offsetMonth(month,1),"calendar-next"),
+        "calendar-today": () => showMonth(model.date.slice(0,7),"calendar-today"),
+        "calendar-ledger": () => {
+          Object.assign(viewOptions.ledger,{day:selectedCalendarDay,q:"",kind:"",page:0});
+          navigate("ledger");
+        },
+        "overview-record": () => openLedger(),
+        "overview-transaction": id => showLedger(model.recent.find(row => row.id === id))
+      });
+      root.onkeydown = event => {
+        if (!event.target.matches('[data-finance="calendar-day"]') || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        const offsets = {ArrowLeft:-1,ArrowRight:1,ArrowUp:-7,ArrowDown:7};
+        const offset = offsets[event.key];
+        if (offset === undefined) return;
+        event.preventDefault();
+        selectCalendarDay(root,model,currency,offsetDay(event.target.dataset.value,offset),true);
+      };
+      if (focus) root.querySelector(`[data-finance="${focus}"]`)?.focus({preventScroll:true});
     });
-    rootActions(root, {});
+    rootActions(root,{});
   }
 
   function filters(items, current, allLabel) {
@@ -161,11 +274,23 @@
       if (!groups.has(day)) groups.set(day, []);
       groups.get(day).push(row);
     }
-    return Array.from(groups, ([date, rows]) => `<section class="finance-day-group"><h3>${h(labelForDay(date))} <small>${h(t(`${rows.length} 笔`, `${rows.length} entries`))}</small></h3>${rows.map(row => renderRow(row)).join("")}</section>`).join("");
+    return Array.from(groups, ([date, items]) => `<details class="finance-day-group" open>
+      <summary><time datetime="${h(date)}">${h(labelForDay(date))}</time><span>${h(t(`${items.length} 笔`, `${items.length} entries`))}</span>${icon("chevron.down")}</summary>
+      <div class="finance-day-rows">${items.map(row => renderRow(row)).join("")}</div>
+    </details>`).join("");
   }
   function rowMenu(items) {
     return `<details class="finance-menu"><summary aria-label="${t("操作", "Actions")}" title="${t("操作", "Actions")}">${icon("ellipsis.circle")}</summary><div class="card finance-menu-popup">${items}</div></details>`;
   }
+  function historyCells(symbol, color, title, note, account, time, amount, amountColor, status = "") {
+    return `<span class="finance-icon tone-${color}">${icon(symbol)}</span><span class="finance-row-text">
+      <strong>${h(title)}</strong>${note ? `<small>${h(note)}</small>` : ""}${status}
+      <small class="finance-row-secondary">${h([account,time].filter(Boolean).join(" · "))}</small></span>
+      <span class="finance-row-account" title="${h(account)}">${h(account)}</span>
+      <time class="finance-row-time">${h(time)}</time>
+      <span class="finance-row-amount tone-${amountColor}">${h(amount)}</span>`;
+  }
+
   function ledgerRow(row, compact = false) {
     const title = categoryName(row.categoryID,row.categoryName);
     const editable = !row.balanceAdjustment && !row.savings;
@@ -174,32 +299,73 @@
     const sign = row.kind === "expense" ? "−" : row.kind === "income" ? "+" : "";
     const cross = row.kind === "transfer" && row.targetCurrency && row.targetCurrency !== row.currency;
     const amount = `${sign}${money(row.amount, row.currency)}${cross ? ` → ${money(row.targetAmount,row.targetCurrency)}` : ""}`;
-    const left = `<span class="finance-icon tone-${color}">${icon(categoryInfo[row.categoryID]?.[1] || "tag")}</span><span class="finance-row-text"><strong>${h(title)}</strong><small>${h(accountPath)}${compact || !row.date ? "" : ` · ${h(row.date.slice(11))}`}${row.note && !compact ? ` · ${h(row.note)}` : ""}</small></span>`;
-    const right = `<span class="finance-row-amount tone-${row.kind === "income" ? "green" : row.kind === "expense" ? "red" : "blue"}">${h(amount)}</span>`;
-    const managed = row.balanceAdjustment ? badge(t("余额调整", "Balance adjustment")) : row.savings ? badge(t("积蓄转账", "Savings transfer"), "purple") : "";
-    if (compact) return `<div class="finance-list-row compact">${left}${right}</div>`;
-    return `<div class="card finance-list-row finance-editable" data-row="${h(row.id)}"><button type="button" class="finance-row-main" data-finance="edit-ledger" data-value="${h(row.id)}">${left}${managed}${right}</button>${rowMenu(action("edit-ledger", editable ? t("编辑", "Edit") : t("查看说明", "Details"), "", "ghost", row.id) + (editable ? action("delete-ledger", t("删除", "Delete"), "trash", "ghost tone-red", row.id) : ""))}</div>`;
+    const tone = row.kind === "income" ? "green" : row.kind === "expense" ? "red" : "blue";
+    const managed = row.balanceAdjustment ? `<span class="finance-row-status">${t("余额调整", "Balance adjustment")}</span>` :
+      row.savings ? `<span class="finance-row-status">${t("积蓄转账", "Savings transfer")}</span>` : "";
+    const timestamp = row.date ? row.date.slice(compact ? 5 : 11,16) : "";
+    const cells = historyCells(categoryInfo[row.categoryID]?.[1] || "tag",color,title,row.note,accountPath,timestamp,amount,tone,managed);
+    if (compact) return `<div class="finance-list-row compact"><button class="finance-row-main" type="button" data-finance="overview-transaction" data-value="${h(row.id)}">${cells}</button></div>`;
+    return `<div class="finance-list-row finance-editable" data-row="${h(row.id)}"><button type="button" class="finance-row-main" data-finance="edit-ledger" data-value="${h(row.id)}">${cells}</button>${rowMenu(action("edit-ledger", editable ? t("编辑", "Edit") : t("查看说明", "Details"), "", "ghost", row.id) + (editable ? action("delete-ledger", t("删除", "Delete"), "trash", "ghost tone-red", row.id) : ""))}</div>`;
   }
+
+  function showLedger(row) {
+    if (!row) return;
+    if (row.balanceAdjustment) openEditor({title:t("余额调整", "Balance adjustment"),body:`<p>${t("请在资产账户中通过再次修改余额更正。", "To correct this transaction, adjust the balance in Accounts.")}</p>`});
+    else if (row.savings) openEditor({title:t("积蓄转账", "Savings transfer"),body:`<p>${t("这笔转账由积蓄计划管理，请在积蓄记录中编辑。", "This transfer is managed in Savings Records.")}</p>`});
+    else openLedger(row);
+  }
+
+  function historySummary(model,isLedger) {
+    const count = t(`${model.total} 笔`, `${model.total} entries`);
+    const subtotals = Object.entries(model.subtotals);
+    return `<div class="finance-history-summary"><span data-count>${h(count)}</span>${isLedger && subtotals.length ? `<div class="finance-history-totals">${subtotals.map(([currency,values]) =>
+      `<span><strong>${h(currency)}</strong><span class="finance-movement tone-green">${h(t("收入", "Income")+" "+movementAmount(values.income,currency,"+"))}</span><span class="finance-movement tone-red">${h(t("支出", "Expenses")+" "+movementAmount(values.expense,currency,"−"))}</span></span>`).join("")}</div>` : ""}</div>`;
+  }
+
   function renderHistory(root, type) {
     const choice = viewOptions[type];
     const isLedger = type === "ledger";
-    root.innerHTML = `<div class="finance-history-toolbar">${isLedger ? `<label class="finance-search">${icon("magnifyingglass")}${input("ledger-query", choice.q || "", `type="search" placeholder="${h(t("搜索备注、分类、账户或金额", "Search notes, categories, accounts or amounts"))}" aria-label="${h(t("搜索流水", "Search transactions"))}"`)}</label>` : ""}<div class="finance-line finance-history-controls">${filters(isLedger ? ledgerKinds : recordKinds,choice.kind || "",isLedger ? t("全部", "All") : t("全部记录", "All records"))}<div class="finance-tools">${isLedger ? `<span class="muted" data-count></span>${action("rules",t("周期记账","Recurring rules"),"repeat")}${action("new-ledger",t("记一笔账","New transaction"),"plus","")}` : `<small class="muted">${t("经验只由击杀怪物获得；取出不会扣除成长资源。", "Experience comes from defeating monsters. Withdrawals keep your progress.")}</small>${action("new-record",t("记一笔","Record"),"plus","")}`}</div></div></div><div data-finance-result></div>`;
+    const dateLabel = t("按日期筛选", "Filter by date");
+    const controls = isLedger ? action("rules",t("周期记账","Recurring rules"),"repeat") + action("new-ledger",t("记此日","Record on this date"),"plus","") :
+      action("new-record",t("记一笔积蓄","New savings record"),"plus","");
+    const searchField = isLedger ? `<label class="finance-search">${icon("magnifyingglass")}${input("ledger-query", choice.q || "",
+      `type="search" placeholder="${h(t("搜索备注、分类、账户或金额", "Search notes, categories, accounts or amounts"))}" aria-label="${h(t("搜索流水", "Search transactions"))}"`)}</label>` : "";
+    root.innerHTML = heading(isLedger ? t("流水", "Transactions") : t("积蓄记录", "Savings records"), "", controls) +
+      `<div class="card finance-history-toolbar"><div class="finance-history-filters">
+      ${filters(isLedger ? ledgerKinds : recordKinds,choice.kind || "",isLedger ? t("全部", "All") : t("全部记录", "All records"))}
+      <div class="finance-history-inputs">${searchField}<div class="finance-history-date">${input("history-day",choice.day || "",`type="date" aria-label="${h(dateLabel)}" title="${h(dateLabel)}"`)}
+      ${action("clear-day",t("清除日期", "Clear date"),"","ghost finance-clear-day")}</div></div></div></div>
+      <div data-finance-result aria-live="polite">${loading()}</div>`;
     let current = [];
     const output = root.querySelector("[data-finance-result]");
+    const search = root.querySelector("[name=ledger-query]");
+    const date = root.querySelector("[name=history-day]");
+    const clear = root.querySelector("[data-finance=clear-day]");
+    const recordDate = root.querySelector(".finance-heading [data-finance=new-ledger]");
     function refreshHistory() {
-      root.querySelectorAll("[data-finance=filter]").forEach(button => {const selected = button.dataset.value === (choice.kind || ""); button.classList.toggle("active", selected); button.setAttribute("aria-pressed", selected);});
+      root.querySelectorAll("[data-finance=filter]").forEach(button => {
+        const selected = (button.dataset.value || "") === (choice.kind || "");
+        button.classList.toggle("active",selected);
+        button.setAttribute("aria-pressed",selected);
+      });
+      clear.hidden = !choice.day;
+      if (recordDate) recordDate.hidden = !choice.day;
+      output.setAttribute("aria-busy","true");
       readView(root,type,(model,error) => {
+        output.removeAttribute("aria-busy");
         if (!model) {output.innerHTML = viewFailure(error); return;}
         choice.page = model.page;
         current = model.items;
-        const count = root.querySelector("[data-count]");
-        if (count) count.textContent = t(`共 ${model.total} 笔`, `${model.total} transactions`);
-        const subtotals = Object.entries(model.subtotals);
-        output.innerHTML = (subtotals.length ? `<div class="finance-subtotals">${subtotals.map(([currency, values]) => `<span class="pill"><strong>${h(currency)}</strong> <span class="tone-green">${t("收入", "Income")} ${h(money(values.income,currency))}</span> · <span class="tone-red">${t("支出", "Expense")} ${h(money(values.expense,currency))}</span></span>`).join("")}<small class="muted">${t("各币种独立统计", "Totals by currency")}</small></div>` : "") + pager(model) + (current.length ? groupDays(current, isLedger ? ledgerRow : recordRow) :
-          (choice.q || choice.kind ? empty(t("没有符合条件的记录", "No matching transactions"), t("换个关键词，或清除筛选试试。", "Change the search or reset the filter."), "magnifyingglass") : isLedger ? empty(t("还没有流水", "No transactions yet"), t("收入、支出和账户互转都会集中显示在这里。", "Income, expenses and account transfers appear here."), "square.and.pencil") : empty(t("还没有积蓄记录", "No savings records yet"), t("每积蓄 1 个货币单位奖励 1 张星券；完成目标额外奖励 100 张。", "Each currency unit saved earns a star ticket. Completing a goal earns another 100."), "list.bullet.rectangle", action("new-record",t("记录第一笔", "Make your first record"), "plus", ""))));
+        const emptyResults = choice.q || choice.kind || choice.day ?
+          empty(t("没有符合条件的记录", "No matching records"), "", "magnifyingglass",action("clear-history",t("清除筛选", "Clear filters"),"","ghost")) :
+          isLedger ? empty(t("还没有流水", "No transactions yet"), "", "square.and.pencil",action("new-ledger",t("记一笔账", "New transaction"),"plus","")) :
+          empty(t("还没有积蓄记录", "No savings records yet"), "", "list.bullet.rectangle",action("new-record",t("记录第一笔", "Make your first record"),"plus",""));
+        const table = current.length ? `<div class="card finance-history-table"><div class="finance-history-columns" aria-hidden="true">
+          <span>${isLedger ? t("分类和备注","Category and note") : t("目标和备注","Goal and note")}</span><span>${t("账户","Account")}</span><span>${t("时间","Time")}</span><span>${t("金额","Amount")}</span></div>
+          ${groupDays(current, isLedger ? ledgerRow : recordRow)}</div>` : `<div class="card finance-history-table">${emptyResults}</div>`;
+        output.innerHTML = historySummary(model,isLedger) + table + pager(model);
       });
     }
-    const search = root.querySelector("[name=ledger-query]");
     let searchTimer;
     if (search) search.oninput = () => {
       clearTimeout(searchTimer);
@@ -207,19 +373,22 @@
       choice.page = 0;
       searchTimer = setTimeout(() => {if (search.isConnected && !root.hidden) refreshHistory();}, 170);
     };
+    date.onchange = () => {choice.day = date.value; choice.page = 0; refreshHistory();};
     const find = id => current.find(item => item.id === id);
     rootActions(root, {
-      filter: value => {choice.kind = value; choice.page = 0; refreshHistory();},
+      filter: value => {choice.kind = value || ""; choice.page = 0; refreshHistory();},
       page: value => {choice.page = Number(value); refreshHistory();},
-      rules: openRules, "new-ledger": () => openLedger(), "new-record": () => openRecord(),
-      "edit-ledger": id => {
-        const row = find(id);
-        if (row.balanceAdjustment) openEditor({title:t("余额调整", "Balance adjustment"),body:`<p>${t("请在资产账户中通过再次修改余额更正。", "To correct this transaction, adjust the balance in Accounts.")}</p>`});
-        else if (row.savings) openEditor({title:t("积蓄转账", "Savings transfer"),body:`<p>${t("这笔转账由积蓄计划管理，请在积蓄记录中编辑。", "This transfer is managed in Savings Records.")}</p>`});
-        else openLedger(row);
+      "clear-day": () => {date.value = ""; choice.day = ""; choice.page = 0; refreshHistory(); date.focus();},
+      "clear-history": () => {
+        if (search) search.value = "";
+        date.value = "";
+        Object.assign(choice,{q:"",day:"",kind:"",page:0});
+        refreshHistory();
       },
+      rules: openRules, "new-ledger": () => openLedger(undefined,{date:choice.day || undefined}), "new-record": () => openRecord(undefined,{date:choice.day || undefined}),
+      "edit-ledger": id => showLedger(find(id)),
       "delete-ledger": id => confirmAction(t("删除这笔账？", "Delete this transaction?"), t("本次操作会移除所选流水。", "This removes the selected transaction."), () => api("/api/ledger/delete",{id})),
-      "edit-record": id => openRecord(find(id)),
+      "edit-record": id => {const row = find(id); if (row) openRecord(row);},
       "delete-record": id => confirmAction(t("删除这条记录？", "Delete this record?"),t("记录会从目标和统计中移除；已经获得的游戏成长不会被扣除。", "The record will be removed from the goal and statistics. Earned game progress is retained."), () => api("/api/records/delete",{id}))
     });
     root.oncontextmenu = event => {
@@ -227,7 +396,7 @@
       if (!row) return;
       event.preventDefault();
       const menu = row.querySelector("details");
-      menu.open = !menu.open;
+      if (menu) menu.open = !menu.open;
     };
     refreshHistory();
   }
@@ -286,11 +455,16 @@
     let evaluated = false;
     const keypad = ["C", "⌫", "%", "÷", "7", "8", "9", "×", "4", "5", "6", "−", "1", "2", "3", "+", "00", "0", ".", "="];
     const kindControl = `<div class="finance-radio-segments">${ledgerKinds.map(([id,zh,en]) => `<label><input type="radio" name="kind" value="${id}"${id===kind ? " checked" : ""}>${h(t(zh,en))}</label>`).join("")}</div>`;
-    openEditor({title:entry ? t("编辑流水", "Edit transaction") : t("记一笔账", "New transaction"), subtitle:t("金额清楚，账户清楚，每一笔都有来处。", "Record the amount, account and category for this transaction."), width:620,
-      body: formSection(t("类型与金额", "Type and amount"),kindControl + field(t("金额（可输入算式）", "Amount or expression"),input("amountExpression",entry?.amount ?? "",'class="finance-amount-input" inputmode="decimal" maxlength="120" required autocomplete="off"')) + `<div class="finance-line muted finance-expression-help"><small>${t("先乘除后加减 · 保存时自动使用结果", "Multiplication and division first. The result is saved.")}</small><output data-preview></output></div><div class="finance-keypad">${keypad.map(key => `<button type="button" class="ghost" data-key="${h(key)}">${h(key)}</button>`).join("")}</div><div data-converted hidden>${field(t("实际转入", "Received amount"),input("targetAmount",entry?.targetAmount ?? "",'type="number" min="0.01" step="0.01"'))}<div data-rate></div></div>`) +
-      formSection(t("账户去向", "Accounts"),`<div class="finance-form-grid">${field(t("使用账户", "Source account"),select("accountID",accountOptions(accounts,source),"required"))}<div data-target hidden>${field(t("转入账户", "Destination account"),select("targetAccountID",""))}</div></div>`) +
-      `<div data-ledger-category>${formSection(t("选择分类", "Category"),'<div class="finance-categories" data-choices></div>')}</div>` +
-      formSection(t("日期与备注", "Date and note"),`<div class="finance-tools">${field(t("日期", "Date"),input("date",editDay,'type="date" required'))}<button class="ghost" type="button" data-day="-1">${t("昨天", "Yesterday")}</button><button class="ghost" type="button" data-day="-2">${t("前天", "Two days ago")}</button></div>${field(t("备注（可选）", "Note (optional)"),input("note",entry?.note || "",'list="finance-note-suggestions"')+'<datalist id="finance-note-suggestions"></datalist>')}<small class="muted">${t("账户互转不会重复计入收支；日常记账不发放游戏货币。", "Transfers stay separate from income and expenses. Transactions do not award game currency.")}</small>`),
+    openEditor({title:entry ? t("编辑流水", "Edit transaction") : t("记一笔账", "New transaction"), width:740,
+      body: `<div class="finance-ledger-editor"><div class="finance-ledger-amount">${formSection(t("类型与金额", "Type and amount"),kindControl +
+        field(t("金额（可输入算式）", "Amount or expression"),input("amountExpression",entry?.amount ?? "",'class="finance-amount-input" inputmode="decimal" maxlength="120" required autocomplete="off"')) +
+        `<div class="finance-expression-help"><output data-preview aria-live="polite"></output></div><details class="finance-calculator"><summary>${t("计算器", "Calculator")}</summary>
+        <div class="finance-keypad">${keypad.map(key => `<button type="button" class="ghost" data-key="${h(key)}">${h(key)}</button>`).join("")}</div></details>
+        <div class="finance-transfer-amount" data-converted hidden>${field(t("实际转入", "Received amount"),input("targetAmount",entry?.targetAmount ?? "",'type="number" min="0.01" step="0.01"'))}<div data-rate></div></div>`)}</div>
+        <div class="finance-ledger-details">${formSection(t("账户", "Accounts"),`<div class="finance-form-grid">${field(t("使用账户", "Source account"),select("accountID",accountOptions(accounts,source),"required"))}<div data-target hidden>${field(t("转入账户", "Destination account"),select("targetAccountID",""))}</div></div>`)}
+        <div data-ledger-category>${formSection(t("分类", "Category"),'<div class="finance-categories" data-choices></div>')}</div>
+        ${formSection(t("日期与备注", "Date and note"),`<div class="finance-tools finance-date-input">${field(t("日期", "Date"),input("date",editDay,'type="date" required'))}<button class="ghost" type="button" data-day="-1">${t("昨天", "Yesterday")}</button><button class="ghost" type="button" data-day="-2">${t("前天", "Two days ago")}</button></div>
+          ${field(t("备注（可选）", "Note (optional)"),input("note",entry?.note || "",'list="finance-note-suggestions"')+'<datalist id="finance-note-suggestions"></datalist>')}`)}</div></div>`,
       onSubmit: async form => {
         await api("/api/ledger/save", data(form));
         if (form.dataset.continueLedger !== "yes") return;
@@ -423,8 +597,27 @@
 
   function renderAccounts(root) {
     const accounts = activeAccounts();
-    root.innerHTML = `<div class="finance-line finance-section-line"><span class="muted">${h(t(`${accounts.length} 个使用中的账户`, `${accounts.length} active accounts`))}</span>${action("new-account",t("新建账户", "New account"),"plus","")}</div>` +
-      (accounts.length ? `<div class="finance-account-grid">${accounts.map(account => `<article class="card finance-account-card"><div class="finance-line"><span class="finance-icon tone-${colorKey(account.colorKey)}">${icon(account.symbol)}</span><h2>${h(account.name)}</h2>${rowMenu(action("edit-account",t("编辑", "Edit"),"","ghost",account.id)+action("delete-account",t("归档/删除", "Archive or delete"),"trash","ghost tone-red",account.id))}</div><span class="muted">${h(accountType(account.type))} · ${h(account.currency)}</span><strong class="finance-account-number">${h(money(account.balance,account.currency))}</strong><div class="finance-tools">${account.includeInNetWorth ? badge(t("计入净资产", "In net worth"),"teal") : ""}${account.type === "credit" ? `<small class="muted">${icon("info.circle")} ${t("余额表示当前负债", "Balance is current debt")}</small>` : ""}</div></article>`).join("")}</div>` : empty(t("还没有资产账户", "No accounts yet"),t("新建账户，之后就可以开始记账。", "Create an account to start recording transactions."),"wallet.pass.fill"));
+    const groups = new Map();
+    for (const account of accounts) {
+      if (!groups.has(account.currency)) groups.set(account.currency, []);
+      groups.get(account.currency).push(account);
+    }
+    const grouped = Array.from(groups, ([currency, rows]) => {
+      const included = rows.filter(account => account.includeInNetWorth);
+      const contribution = included.reduce((total,account) => total + account.contribution, 0);
+      return `<article class="card finance-account-table"><header><h2>${h(currency)} · ${h(t(state.currencies.find(item => item.id === currency)?.name || currency,currency))}</h2>
+        ${included.length ? `<div><span>${t("净资产", "Net worth")}</span><strong class="finance-number">${h(money(contribution,currency))}</strong></div>` : ""}</header>
+        ${rows.map(account => {
+          const note = [accountType(account.type),account.type === "credit" ? t("负债", "Debt") : "",account.includeInNetWorth ? "" : t("不计入净资产","Excluded from net worth")].filter(Boolean).join(" · ");
+          return `<div class="finance-account-row"><button type="button" class="finance-account-main" data-finance="edit-account" data-value="${h(account.id)}">
+            <span class="finance-icon tone-${colorKey(account.colorKey)}">${icon(account.symbol)}</span><span><strong>${h(account.name)}</strong><small>${h(note)}</small></span>
+            <strong class="finance-number finance-account-number${account.type === "credit" ? " finance-movement tone-orange" : ""}">${h(money(account.balance,account.currency))}</strong></button>
+            ${rowMenu(action("edit-account",t("编辑", "Edit"),"","ghost",account.id)+action("delete-account",t("归档/删除", "Archive or delete"),"trash","ghost tone-red",account.id))}</div>`;
+        }).join("")}</article>`;
+    });
+    root.innerHTML = heading(t("资产账户", "Accounts"), "", action("new-account",t("新建账户", "New account"),"plus","")) +
+      (grouped.length ? `<div class="finance-stack">${grouped.join("")}</div>` : `<article class="card">${empty(t("还没有资产账户", "No accounts yet"),
+        t("新建账户，之后就可以开始记账。", "Create an account to start recording transactions."),"wallet.pass.fill")}</article>`);
     rootActions(root,{"new-account":() => openAccount(), "edit-account":id => openAccount(accountByID(id)), "delete-account":id => confirmAction(t("处理这个账户？", "Remove this account?"),t("有流水的账户会归档，没有流水的账户会删除。", "Accounts with transactions are archived. Empty accounts are deleted."),() => api("/api/accounts/delete",{id}))});
   }
   function openAccount(row) {
@@ -440,10 +633,12 @@
     const month = state.summary.monthKey;
     const previous = offsetMonth(month,-1);
     const rateToggle = state.settings.budgetRolloverEnabled;
-    root.innerHTML = `<div class="finance-line finance-section-line"><span class="muted">${h(monthLabel(month,true))} · ${h(currency)}</span><div class="finance-tools"><label class="finance-checkbox" title="${h(t("可用额度 = 本月预算 + 上月结余", "Available budget = current budget plus prior balance"))}">${input("budget-rollover","yes",`type="checkbox"${rateToggle ? " checked" : ""}`)} ${t("滚存上月结余", "Carry over last month’s balance")}</label>${action("edit-budgets",t("编辑预算", "Edit budgets"),"slider.horizontal.3","")}</div></div><div data-finance-result class="finance-stack"></div>`;
+    root.innerHTML = heading(t("月度预算", "Monthly budget"), monthLabel(month,true)+" · "+currency,
+      `<label class="finance-checkbox" title="${h(t("可用额度 = 本月预算 + 上月结余", "Available budget = current budget plus prior balance"))}">${input("budget-rollover","yes",`type="checkbox"${rateToggle ? " checked" : ""}`)} ${t("滚存上月结余", "Carry over last month’s balance")}</label>${action("edit-budgets",t("编辑预算", "Edit budgets"),"slider.horizontal.3","")}`) +
+      `<div data-finance-result class="finance-stack">${loading()}</div>`;
     const rollover = root.querySelector("[name=budget-rollover]");
     rollover.onchange = () => api("/api/settings", {budgetRolloverEnabled:rollover.checked}).catch(error => {rollover.checked = !rollover.checked; showError(error);});
-    rootActions(root,{"edit-budgets":openBudget});
+    rootActions(root,{"edit-budgets":openBudget,"budget-category":openBudget});
     readView(root,"budgets",(model,error) => {
       const output = root.querySelector("[data-finance-result]");
       if (!model) {output.innerHTML = viewFailure(error); return;}
@@ -451,7 +646,10 @@
       const available = state.budgets.filter(row => row.currency === currency);
       const byMonth = key => new Map(available.filter(row => row.monthKey === key).map(row => [row.categoryID,row.amount]));
       const planned = byMonth(month), prior = byMonth(previous);
-      const rows = expenses.map(category => ({...category,amount:planned.get(category.id)||0, spent:model.expenseCategories[category.id]||0,carried:rateToggle ? (prior.get(category.id)||0)-(model.previousExpenseCategories[category.id]||0) : 0}));
+      const rows = expenses.map(category => ({...category,amount:planned.get(category.id)||0, spent:model.expenseCategories[category.id]||0,
+        carried:rateToggle ? (prior.get(category.id)||0)-(model.previousExpenseCategories[category.id]||0) : 0}));
+      const active = row => Boolean(row.amount || row.spent || row.carried);
+      rows.sort((a,b) => Number(active(b))-Number(active(a)));
       const total = [...planned.values()].reduce((acc,amount) => acc+amount,0);
       const spent = model.months.at(-1).expense;
       const leftover = total-spent+rows.reduce((acc,row) => acc+row.carried,0);
@@ -459,14 +657,22 @@
       end.setDate(end.getDate()-1);
       const days = Math.max(1,end.getDate()-Number(today().slice(8))+1);
       output.innerHTML = tiles([
+        tile(rateToggle ? t("可用余额（含结转）", "Available with carryover") : t("可用余额", "Available"),moneySigned(leftover,currency),"gauge.with.dots.needle.67percent",leftover < 0 ? "red" : "teal"),
         tile(t("计划预算", "Planned budget"),money(total,currency),"target","blue"),
         tile(t("实际支出", "Actual expenses"),money(spent,currency),"cart.fill",spent > total && total > 0 ? "red" : "green"),
-        tile(rateToggle ? t("可用余额（含结转）", "Available with carryover") : t("可用余额", "Available"),moneySigned(leftover,currency),"gauge.with.dots.needle.67percent","purple"),
-        tile(t("剩余日均可用", "Available per day"),moneySigned(leftover/days,currency),"calendar","teal")].join("")) +
-        `<div class="card finance-budget-list">${rows.map(row => {const limit = row.amount+row.carried;return `<div class="finance-budget-row"><span class="finance-icon tone-${colorKey(categoryInfo[row.id]?.[2])}">${icon(categoryInfo[row.id]?.[1] || "tag")}</span><div><strong>${h(categoryName(row.id,row.name))}</strong>${Math.abs(row.carried) > .004 ? `<small class="tone-${row.carried < 0 ? "red" : "teal"}">${h(t("含上月结转", "Carryover") + " " + moneySigned(row.carried,currency))}</small>` : ""}</div>${progress(limit > 0 ? row.spent/limit : 0,limit > 0 && row.spent > limit ? "red" : "blue")}<span class="finance-number">${h(money(row.spent,currency))} / ${h(money(limit,currency))}</span></div>`;}).join("")}</div>`;
+        tile(t("剩余日均可用", "Available per day"),moneySigned(leftover/days,currency),"calendar",leftover < 0 ? "red" : "teal")].join("")) +
+        `<article class="card finance-budget-list"><header class="finance-budget-columns"><h2>${t("分类预算","Category budgets")}</h2>
+        <span>${t("使用进度", "Progress")}</span><span>${t("实际支出 / 可用额度","Actual / Available")}</span></header>${rows.map(row => {
+        const limit = row.amount+row.carried;
+        const color = row.spent > limit && (row.spent > 0 || limit < 0) ? "red" : "teal";
+        const categoryMarkup = action("budget-category",categoryName(row.id,row.name),"","ghost finance-budget-link",row.id);
+        return `<div class="finance-budget-row"><span class="finance-icon tone-${colorKey(categoryInfo[row.id]?.[2])}">${icon(categoryInfo[row.id]?.[1] || "tag")}</span>
+        <div>${categoryMarkup}${Math.abs(row.carried) > .004 ? `<small class="tone-${row.carried < 0 ? "red" : "teal"}">${h(t("结转", "Carryover") + " " + moneySigned(row.carried,currency))}</small>` : ""}</div>
+        ${progress(limit > 0 ? row.spent/limit : (row.spent > 0 ? 1 : 0),color)}<span class="finance-number"><strong class="finance-movement tone-${color}">${h(money(row.spent,currency))}</strong> / ${h(money(limit,currency))}</span></div>`;
+      }).join("")}</article>`;
     });
   }
-  function openBudget() {
+  function openBudget(categoryID) {
     const month = state.summary.monthKey, next = offsetMonth(month,1), currency = state.currency;
     const expenses = state.categories.filter(row => row.kind === "expense");
     const valuesFor = key => new Map(state.budgets.filter(row => row.monthKey === key && row.currency === currency).map(row => [row.categoryID,row.amount]));
@@ -488,28 +694,48 @@
           const previous = valuesFor(offsetMonth(control.value,-1));
           for (const item of expenses) {const target = form.elements[`budget-${item.id}`]; if (!Number(target.value) && previous.has(item.id)) target.value = previous.get(item.id);}
         };
-        refresh();
+        refresh(); if (categoryID) form.elements[`budget-${categoryID}`]?.focus();
       },
       onSubmit:form => api("/api/budgets/batch",{monthKey:form.elements.monthKey.value,currency,amounts:Object.fromEntries(expenses.map(row => [row.id,form.elements[`budget-${row.id}`].value || 0]))})});
   }
 
   const activeGoals = () => (state.goals || []).filter(goal => ["active","paused"].includes(goal.status)).sort((a,b) => (a.status === "paused")-(b.status === "paused") || a.deadline.localeCompare(b.deadline));
+  function goalCard(goal) {
+    const account = accountByID(goal.savingsAccountID);
+    const percentage = Math.trunc(goal.progress*100);
+    const color = colorKey(goal.colorKey);
+    const active = ["active","paused"].includes(goal.status);
+    const menu = action("edit-goal",t("编辑", "Edit"),"","ghost",goal.id) +
+      (active ? action("pause-goal",goal.status === "paused" ? t("继续目标", "Resume") : t("暂停目标", "Pause"),"","ghost",goal.id) : "") +
+      action("delete-goal",t("删除或归档", "Delete or archive"),"trash","ghost tone-red",goal.id);
+    const deadline = dateInput(goal.deadline);
+    return `<article class="card finance-goal-card tone-${color}">
+      <header><span class="finance-icon">${icon(goal.symbol)}</span><div><h2>${h(goal.title)}</h2>
+      ${goal.status === "active" ? "" : `<small>${h(enumTitle(goalStates,goal.status))}</small>`}</div>${rowMenu(menu)}</header>
+      <div class="finance-goal-amount"><div><span>${t("已攒下","Saved")}</span><strong>${h(money(goal.balance,goal.currency))}</strong></div>
+      <div><span>${t("目标", "Target")}</span><strong>${h(money(goal.targetAmount,goal.currency))}</strong></div></div>
+      ${progress(goal.progress,color)}<div class="finance-goal-meta"><strong>${percentage}%</strong>
+      ${deadline ? `<time datetime="${h(deadline)}">${h(deadline)}</time>` : ""}</div>
+      ${goal.notes ? `<p class="finance-goal-note">${h(goal.notes)}</p>` : ""}
+      <footer><small>${account ? h(`${t("存钱罐", "Savings account")} · ${account.name}`) : t("首笔积蓄时选择账户", "Choose an account on the first deposit")}</small>
+      ${goal.status === "active" ? action("goal-deposit",t("存入", "Deposit"),"plus","ghost",goal.id) : ""}</footer></article>`;
+  }
+
   function renderGoals(root) {
     const goals = state.goals || [];
-    const ordered = [...activeGoals(), ...goals.filter(goal => ["completed","archived"].includes(goal.status)).sort((a,b) => (a.status === "archived")-(b.status === "archived") || a.deadline.localeCompare(b.deadline))];
-    root.innerHTML = tiles([
-      tile(t("进行中目标", "Current goals"),activeGoals().length,"target","blue"),
-      tile(t("已完成目标", "Completed goals"),goals.filter(goal => goal.status === "completed").length,"checkmark.seal.fill","green"),
-      tile(t("已归档目标", "Archived goals"),goals.filter(goal => goal.status === "archived").length,"archivebox.fill","purple")].join("")) +
-      `<div class="finance-line finance-section-line"><h2>${t("全部目标", "All goals")}</h2>${action("new-goal",t("新建攒钱目标", "New savings goal"),"plus","")}</div>` +
-      (ordered.length ? `<div class="finance-account-grid">${ordered.map(goal => {
-        const account = accountByID(goal.savingsAccountID);
-        const statusColor = {active:"teal",paused:"orange",completed:"green",archived:"blue"}[goal.status];
-        const menu = action("edit-goal",t("编辑", "Edit"),"","ghost",goal.id) + (["active","paused"].includes(goal.status) ? action("pause-goal",goal.status === "paused" ? t("继续目标", "Resume") : t("暂停目标", "Pause"),"","ghost",goal.id) : "") + action("delete-goal",t("删除或归档", "Delete or archive"),"trash","ghost tone-red",goal.id);
-        return `<article class="card finance-goal-card"><div class="finance-line"><span class="finance-icon tone-${colorKey(goal.colorKey)}">${icon(goal.symbol)}</span><h2>${h(goal.title)}</h2>${badge(enumTitle(goalStates,goal.status),statusColor)}${rowMenu(menu)}</div><div class="finance-line finance-goal-amount"><strong>${h(money(goal.balance,goal.currency))}</strong><small class="muted">/ ${h(money(goal.targetAmount,goal.currency))}</small></div>${progress(goal.progress,goal.colorKey)}<div class="finance-line finance-goal-meta"><span>${Math.trunc(goal.progress*100)}%</span><span>${icon("calendar")} ${h(dateInput(goal.deadline))}</span></div><small class="muted">${icon("wallet.pass.fill")} ${account ? `${t("存钱罐", "Savings account")} · ${h(account.name)}` : t("存钱罐账户将在首笔积蓄时选择", "Choose a savings account on the first deposit")}</small>${goal.notes ? `<small>${h(goal.notes)}</small>` : ""}</article>`;
-      }).join("")}</div>` : empty(t("还没有攒钱目标", "No savings goals yet"),t("为真正想要的东西定一个金额和日期。", "Set an amount and date for something you really want."),"target",action("new-goal",t("创建第一个目标", "Create your first goal"),"plus","")));
+    const open = activeGoals();
+    const completed = goals.filter(goal => goal.status === "completed");
+    const archived = goals.filter(goal => goal.status === "archived");
+    const goalDeck = rows => `<div class="finance-goals-grid">${rows.map(goalCard).join("")}</div>`;
+    const past = (rows, label) => rows.length ? `<details class="finance-goal-history"><summary>${h(label)} <span>${rows.length}</span></summary>${goalDeck(rows)}</details>` : "";
+    root.innerHTML = heading(t("攒钱目标", "Savings goals"), "", action("new-goal",t("新建目标", "New goal"),"plus","")) +
+      (goals.length ? `<div class="finance-stack">${open.length ? goalDeck(open) : ""}${past(completed,t("已完成","Completed"))}${past(archived,t("已归档","Archived"))}</div>` :
+        `<article class="card">${empty(t("还没有攒钱目标", "No savings goals yet"),t("先设定目标金额和计划完成日期。", "Set an amount and a target date."),"target")}</article>`);
     const find = id => goals.find(goal => goal.id === id);
-    rootActions(root,{"new-goal":() => openGoal(),"edit-goal":id => openGoal(find(id)),"pause-goal":id => api("/api/goals/status",{id,status:find(id).status === "paused" ? "active" : "paused"}),"delete-goal":id => confirmAction(t("处理这个目标？", "Remove this goal?"),t("已有积蓄记录的目标会归档，历史统计会保留。", "Goals with existing records are archived to keep their history."),() => api("/api/goals/delete",{id}))});
+    rootActions(root,{"new-goal":() => openGoal(),"edit-goal":id => openGoal(find(id)),
+      "goal-deposit":id => openRecord(undefined,{goalID:id,kind:"deposit"}),
+      "pause-goal":id => api("/api/goals/status",{id,status:find(id).status === "paused" ? "active" : "paused"}),
+      "delete-goal":id => confirmAction(t("处理这个目标？", "Remove this goal?"),t("已有积蓄记录的目标会归档，历史统计会保留。", "Goals with existing records are archived to keep their history."),() => api("/api/goals/delete",{id}))});
   }
   function openGoal(goal) {
     const start = new Date(`${today()}T12:00:00`);
@@ -526,8 +752,13 @@
   function recordRow(row) {
     const color = row.kind === "deposit" ? "teal" : "orange";
     const from = accountByID(row.fundingAccountID), to = accountByID(row.savingsAccountID);
-    const path = from && to ? ` · ${row.kind === "deposit" ? `${from.name} → ${to.name}` : `${to.name} → ${from.name}`}` : "";
-    return `<div class="card finance-list-row finance-editable" data-row="${h(row.id)}"><button type="button" class="finance-row-main" data-finance="edit-record" data-value="${h(row.id)}"><span class="finance-icon tone-${color}">${icon(row.kind === "deposit" ? "arrow.down.circle" : "arrow.up.circle")}</span><span class="finance-row-text"><strong>${h(row.goalTitle || t("已删除的目标", "Deleted goal"))}</strong><small>${h(enumTitle(savingsCategories,row.category)+path)}${row.note ? ` · ${h(row.note)}` : ""}</small></span>${badge(enumTitle(recordKinds,row.kind),color)}<span class="finance-row-amount tone-${color}">${row.kind === "deposit" ? "+" : "−"}${h(money(row.amount,row.currency))}</span></button>${rowMenu(action("edit-record",t("编辑", "Edit"),"","ghost",row.id)+action("delete-record",t("删除", "Delete"),"trash","ghost tone-red",row.id))}</div>`;
+    const path = from && to ? (row.kind === "deposit" ? `${from.name} → ${to.name}` : `${to.name} → ${from.name}`) : "";
+    const category = enumTitle(savingsCategories,row.category);
+    const note = [category,row.note].filter(Boolean).join(" · ");
+    const time = row.date ? row.date.slice(11,16) : "";
+    const amount = (row.kind === "deposit" ? "+" : "−") + money(row.amount,row.currency);
+    const cells = historyCells(row.kind === "deposit" ? "arrow.down.circle" : "arrow.up.circle",color,row.goalTitle || t("已删除的目标", "Deleted goal"),note,path,time,amount,color);
+    return `<div class="finance-list-row finance-editable" data-row="${h(row.id)}"><button type="button" class="finance-row-main" data-finance="edit-record" data-value="${h(row.id)}">${cells}</button>${rowMenu(action("edit-record",t("编辑", "Edit"),"","ghost",row.id)+action("delete-record",t("删除", "Delete"),"trash","ghost tone-red",row.id))}</div>`;
   }
   function openRecord(row, defaults = {}) {
     const goals = activeGoals();
@@ -538,7 +769,7 @@
       return;
     }
     const chosenGoal = row?.goalID || defaults.goalID || goals[0].id;
-    const editDay = dateInput(row?.date) || today();
+    const editDay = dateInput(row?.date) || defaults.date || today();
     openEditor({title:row ? t("编辑积蓄记录", "Edit savings record") : t("记一笔积蓄", "New savings record"),subtitle:t("把一笔钱放进真正想实现的目标。", "Allocate money to a goal you want to reach."),width:540,
       body:formSection(t("目标与金额", "Goal and amount"),`<div class="finance-form-grid">${field(t("类型", "Type"),select("kind",localizedOptions(recordKinds,row?.kind || defaults.kind || "deposit")))}${field(t("所属目标", "Goal"),select("goalID",options(goals.map(goal => [goal.id,`${goal.title} · ${goal.currency}`]),chosenGoal),"required"))}</div>${field(t("金额", "Amount"),input("amount",row?.amount ?? "",'type="number" min="0.01" step="0.01" required class="finance-amount-input"'))}`) +
         formSection(t("账户去向", "Accounts"),`<div class="finance-form-grid">${field(t("转出账户", "Source account"),select("fundingAccountID","","required"),"finance-funding")}${field(t("目标存钱罐", "Savings account"),select("savingsAccountID","","required"))}</div><small data-unavailable class="tone-orange" hidden>${t("请先在资产账户中创建至少两个与目标同币种的账户。", "Create at least two active accounts in the goal’s currency first.")}</small><small data-goal-balance class="muted"></small>`) +
@@ -600,7 +831,7 @@
       const ctx = canvas.getContext("2d");
       const style = getComputedStyle(container);
       ctx.scale(size,size);
-      ctx.font = '11px "Segoe UI", sans-serif';
+      ctx.font = '11px "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif';
       const left = Math.min(width*.27,Math.max(36,ctx.measureText(money(Math.max(Math.abs(minimum),Math.abs(maximum)),currency)).width+14));
       const right = 15, top = 13, bottom = height-26;
       const x = index => left + (width-left-right) * index / Math.max(1,months.length-1);
@@ -644,28 +875,40 @@
   function renderTrends(root, view) {
     root.financeObservers?.forEach(observer => observer.disconnect());
     root.financeObservers = [];
-    root.innerHTML = `<div class="finance-line finance-section-line">${currencyPicker(view)}<small class="muted">${t("不同币种按原币分别统计。", "Each currency is reported separately.")}</small></div><div data-finance-result class="finance-stack"></div>`;
+    const reports = view === "reports";
+    root.innerHTML = heading(reports ? t("收支报表", "Reports") : t("积蓄趋势", "Savings trends"),
+      t("金额按原币统计", "Amounts shown in the original currency"), currencyPicker(view,true)) +
+      `<div data-finance-result class="finance-stack">${loading()}</div>`;
     switchCurrency(root,view);
+    rootActions(root,{});
     readView(root,view,(model,error) => {
       const output = root.querySelector("[data-finance-result]");
       if (!model) {output.innerHTML = viewFailure(error); return;}
       const currency = viewOptions[view].currency || state.currency;
       const months = model.months.map(row => row.month);
-      if (view === "reports") {
+      if (reports) {
         const last = model.months.at(-1), previous = model.months.at(-2);
         const net = last.income-last.expense;
         const prev = previous.income-previous.expense;
         const change = Math.abs(prev) > .004 ? (net-prev)/Math.abs(prev) : null;
         const netSeries = [{label:t("月末净资产", "Month-end net worth"),color:"blue",values:model.months.map(row => row.netWorth)}];
         const categorySeries = model.categorySeries.map((row,index) => ({label:categoryName(row.id),color:colors[index],values:row.values}));
+        const incomeExpenseSeries = [
+          {label:t("收入", "Income"),color:"green",values:model.months.map(row => row.income)},
+          {label:t("支出", "Expense"),color:"red",values:model.months.map(row => row.expense)}
+        ];
         output.innerHTML = tiles([
-          tile(t("本月净现金流", "Net cash flow this month"),moneySigned(net,currency),"arrow.left.arrow.right","blue"),
-          tile(change === null ? t("上月无基数，暂不环比", "No prior month baseline") : t("较上月净现金流", "Net cash flow vs. last month"),change === null ? "—" : `${change > 0 ? "+" : ""}${Math.round(change*100)}%`,change < 0 ? "arrow.down.left" : "arrow.up.right",change < 0 ? "red" : "green"),
-          tile(t("本月流水", "Transactions this month"),model.entryCount,"list.bullet","purple")].join("")) +
-          panel(t("近 6 个月收支", "Income & expenses over six months"),"chart.bar.fill",barChart(months,[{label:t("收入", "Income"),color:"green",values:model.months.map(row => row.income)},{label:t("支出", "Expense"),color:"red",values:model.months.map(row => row.expense)}],currency)) +
-          panel(t("月末净资产趋势", "Month-end net worth"),"chart.line.uptrend.xyaxis",lineChartMarkup("net-worth-chart",netSeries,months,currency)) +
-          panel(t("分类支出趋势", "Spending trends by category"),"chart.line.uptrend.xyaxis",lineChartMarkup("category-trend-chart",categorySeries,months,currency),`<small class="muted">${t("近 6 个月", "Last six months")} · ${h(currency)}</small>`) +
-          `<div class="finance-overview-pair">${panel(t("本月支出结构", "Expense breakdown"),"chart.pie.fill",categoryChart(model.expenseCategories,currency,t("记录支出后，这里会按分类展示结构。", "Record an expense to see the category breakdown.")))}${panel(t("本月收入结构", "Income breakdown"),"chart.bar.fill",categoryChart(model.incomeCategories,currency,t("记录收入后，这里会按分类展示结构。", "Record income to see the category breakdown.")))}</div>`;
+          tile(t("本月净现金流", "Net cash flow this month"),moneySigned(net,currency),"arrow.left.arrow.right",net < 0 ? "red" : "teal"),
+          tile(change === null ? t("上月无环比基数", "No prior month baseline") : t("净现金流环比", "Cash flow vs. last month"),change === null ? "—" : `${change > 0 ? "+" : ""}${Math.round(change*100)}%`,change < 0 ? "arrow.down.left" : "arrow.up.right",change < 0 ? "red" : "green"),
+          tile(t("本月流水", "Transactions this month"),model.entryCount,"list.bullet","blue")].join("")) +
+          `<div class="finance-report-grid"><div class="finance-report-primary">
+            ${panel(t("近六个月收支", "Income and expenses over six months"),"",barChart(months,incomeExpenseSeries,currency))}
+            ${panel(t("月末净资产", "Month-end net worth"),"",lineChartMarkup("net-worth-chart",netSeries,months,currency))}
+            ${panel(t("分类支出趋势", "Spending trends by category"),"",lineChartMarkup("category-trend-chart",categorySeries,months,currency))}
+          </div><div class="finance-report-secondary">
+            ${panel(t("本月支出结构", "Expense breakdown"),"",categoryChart(model.expenseCategories,currency,t("本月没有支出", "No expenses this month")))}
+            ${panel(t("本月收入结构", "Income breakdown"),"",categoryChart(model.incomeCategories,currency,t("本月没有收入", "No income this month")))}
+          </div></div>`;
         for (const [id,series] of [["net-worth-chart",netSeries],["category-trend-chart",categorySeries]]) {
           const node = root.querySelector(`#${id}`);
           if (node) root.financeObservers.push(drawLine(node,months,series,currency));
@@ -678,12 +921,24 @@
       const goal = activeGoals().find(item => item.currency === currency);
       const remaining = goal ? Math.max(0,goal.targetAmount-goal.balance) : 0;
       const monthsToGoal = average > 0 ? Math.ceil(remaining/average) : null;
+      const outlook = goal ? `<div class="finance-brief"><strong>${h(goal.title)}</strong><strong class="finance-number">${Math.trunc(goal.progress*100)}%</strong></div>
+        ${progress(goal.progress,"teal")}${remaining > 0 ?
+        `<div class="finance-brief"><span class="muted">${t("距目标还差","Remaining")}</span><strong class="finance-number">${h(money(remaining,currency))}</strong></div>
+        <p class="muted">${h(monthsToGoal ? t(`按近六个月平均存入速度，预计还需 ${monthsToGoal} 个月。`,`At the six-month average, about ${monthsToGoal} months remain.`) :
+          t("有存入记录后即可估算完成时间。", "Record a deposit to calculate an estimate."))}</p>` : `<span class="finance-movement tone-green">${t("已达到目标","Goal reached")}</span>`}` :
+        empty(t("当前币种没有进行中的目标。", "No active goals in this currency."),"","target");
+      const heatmap = `<div class="finance-calendar finance-heatmap">${Object.entries(model.days).map(([date, amount]) => {
+        const label = `${date} · ${money(amount,currency)}`;
+        return `<div tabindex="0" title="${h(label)}" aria-label="${h(label)}"><i${amount > 0 ? ` style="opacity:${.35+amount/dayMax*.65}" class="has-data"` : ""}></i><small>${Number(date.slice(8))}</small></div>`;
+      }).join("")}</div>`;
       output.innerHTML = tiles([
-        tile(t("近六月月均存入", "Average monthly savings"),money(average,currency),"chart.bar.fill","blue"),
-        tile(t("累计积蓄天数", "Days with savings"),`${model.savingDays} ${t("天", "days")}`,"calendar","teal"),
+        tile(t("近六月月均存入", "Average monthly savings"),money(average,currency),"chart.bar.fill","teal"),
+        tile(t("累计积蓄天数", "Days with savings"),`${model.savingDays} ${t("天", "days")}`,"calendar","blue"),
         tile(t("当前连续天数", "Current streak"),`${model.streak} ${t("天", "days")}`,"flame.fill","orange")].join("")) +
-        panel(t("近六个月存入趋势", "Deposits over six months"),"chart.bar.fill",barChart(months,[{label:t("存入", "Deposit"),color:"blue",values}],currency,true)) +
-        `<div class="finance-overview-pair">${panel(t("最近 35 天积蓄日历", "Last 35 days of savings"),"calendar",`<div class="finance-calendar finance-heatmap">${Object.entries(model.days).map(([date, amount]) => {const label = `${date} · ${money(amount,currency)}`;return `<div tabindex="0" title="${h(label)}" aria-label="${h(label)}"><i${amount > 0 ? ` style="opacity:${.35+amount/dayMax*.65}" class="has-data"` : ""}></i><small>${Number(date.slice(8))}</small></div>`;}).join("")}</div>`)}${panel(t("目标预测", "Goal forecast"),"target",goal ? `<strong>${icon(goal.symbol)} ${h(goal.title)}</strong>${remaining <= 0 ? `<span class="tone-green">${t("已完成", "Completed")}</span>` : `<span class="muted">${h(t(`还差 ${money(remaining,currency)}`,`${money(remaining,currency)} remaining`))}</span><span>${h(monthsToGoal ? t(`按近六个月平均速度，预计还需要约 ${monthsToGoal} 个月。`,`At the six-month average, about ${monthsToGoal} more months remain.`) : t("积累更多记录后，这里会估算完成时间。", "The forecast will appear when there is savings history."))}</span>`}${progress(goal.progress,"purple")}` : empty(t("该币种暂无进行中的目标。", "No current goal in this currency."),"","target"))}</div>`;
+        `<div class="finance-report-grid"><div class="finance-report-primary">
+          ${panel(t("近六个月存入趋势", "Deposits over six months"),"",barChart(months,[{label:t("存入", "Deposit"),color:"teal",values}],currency,true))}
+          ${panel(t("最近 35 天积蓄日历", "Last 35 days of savings"),"",heatmap)}
+        </div><div class="finance-report-secondary">${panel(t("目标进度估算", "Goal forecast"),"",outlook,link("goals",t("攒钱目标","Savings goals")))}</div></div>`;
     });
   }
 
@@ -722,6 +977,7 @@
   function render(view) {
     const root = document.getElementById(view);
     if (!root || !state || state.status !== "ready") return;
+    root.classList.add("finance-workspace");
     switch (view) {
       case "overview": renderOverview(root); break;
       case "ledger": case "records": renderHistory(root,view); break;

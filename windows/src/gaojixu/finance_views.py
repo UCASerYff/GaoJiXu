@@ -1,6 +1,7 @@
 """Read models for the financial workspaces, backed by the active local library."""
 
 from collections import defaultdict
+from datetime import date
 from decimal import Decimal, DecimalException, localcontext
 import re
 
@@ -19,18 +20,31 @@ def view(store, query):
             page = max(0, int(query.get("page", ["0"])[0]))
         except ValueError as exc:
             raise AppError("页码无法识别。", "invalid") from exc
-        return history(store, route, page, query.get("kind", [""])[0], query.get("q", [""])[0].strip().casefold())
+        day = query.get("day", [""])[0]
+        return history(store, route, page, query.get("kind", [""])[0],
+                       query.get("q", [""])[0].strip().casefold(), _date_filter(day) if day else None)
     currency = query.get("currency", [store.currency])[0]
     if currency not in catalog.CURRENCIES:
         raise AppError("币种无法识别。", "invalid")
     if route == "overview":
-        return overview(store, currency)
+        month = query.get("calendarMonth", [""])[0]
+        return overview(store, currency, _date_filter(month + "-01") if month else None)
     if route in {"reports", "analytics", "budgets"}:
         return trends(store, currency, route)
     raise AppError("没有这个财务页面。", "invalid")
 
 
-def history(store, route, page, kind, query):
+def _date_filter(value):
+    try:
+        parsed = date.fromisoformat(value)
+        if parsed.isoformat() != value:
+            raise ValueError(value)
+        return parsed
+    except ValueError as exc:
+        raise AppError("日期无法识别。", "invalid") from exc
+
+
+def history(store, route, page, kind, query, day=None):
     is_ledger = route == "ledger"
     rows = finance.entries(store) if is_ledger else finance.records(store)
     accounts = {row["id"]: row for row in finance.accounts(store)}
@@ -56,6 +70,8 @@ def history(store, route, page, kind, query):
             if not any(query in str(value).casefold() for value in searchable if value):
                 continue
         when = read_cocoa(row.get("date"), store.tz)
+        if day and (when is None or when.date() != day):
+            continue
         matching.append((when.timestamp() if when else float("-inf"), row))
         if is_ledger and not adjustment and account and row.get("kind") in {"income", "expense"}:
             subtotals[currency][row["kind"]] += money(row.get("amount"))
@@ -69,13 +85,15 @@ def history(store, route, page, kind, query):
                           for code, amounts in subtotals.items()}}
 
 
-def overview(store, currency):
+def overview(store, currency, calendar=None):
     now = store.now()
     key = month_key(now, store.tz)
+    selected = now.replace(year=calendar.year, month=calendar.month, day=1) if calendar else now
     goals = [row for row in finance.goals(store) if row.get("currency") == currency and row.get("status") != "archived"]
     recent = finance.entries(store)[:4]
     return {
-        "date": now.date().isoformat(), "month": key, "days": finance.daily_summary(store, currency, now),
+        "date": now.date().isoformat(), "month": key, "calendarMonth": month_key(selected, store.tz),
+        "days": finance.daily_summary(store, currency, selected),
         "netWorth": finance.net_worth(store, currency), "income": finance.month_income(store, currency, now),
         "expense": finance.month_expense(store, currency, now),
         "allocated": money_number(sum(money(finance.goal_balance(store, goal)) for goal in goals)),

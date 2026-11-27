@@ -63,7 +63,8 @@ const pixels = () => js(`(() => {
   const gl=canvas.getContext("webgl");
   const pixel=new Uint8Array(4);
   let painted=0;
-  for(let x=10;x<canvas.width;x+=30) for(let y=10;y<canvas.height;y+=30) {
+  const stride=Math.max(4,Math.floor(Math.min(canvas.width,canvas.height)/45));
+  for(let x=0;x<canvas.width;x+=stride) for(let y=0;y<canvas.height;y+=stride) {
     gl.readPixels(x,y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixel);
     if(pixel[3]>100) painted++;
   }
@@ -96,27 +97,37 @@ try {
   assert.ok(await pixels()>8,"WebGL backbuffer must contain the illustrated actors");
   assert.match(await text(battle),/Hero Lv\./);
   assert.match(await text(battle),/Coin Slime/);
-  await shot("adventure-front");
+  assert.ok(await js(`document.querySelector(".adv-operations").getBoundingClientRect().left > ${prepared}.getBoundingClientRect().left`),
+    "combat telemetry appears beside the map at desktop width");
+  await js(`api("/api/settings",{language:"zh",appearance:"light"})`);
+  await ready(renderer);
+  await shot("adventure-map-light");
+  await js(`api("/api/settings",{language:"en"})`);
+  await ready(renderer);
   const heroBefore=await getHeroX();
   await js(`api("/api/adventure/tick",{})`);
   await until(async()=>Math.abs(await getHeroX()-heroBefore)>3,"hero position changes with real battle token");
   await click(battle+' [data-adv-action="actor"]');
-  assert.match(await text("#adventure .adv-battle-info"),/Balanced/);
+  assert.ok((await text("#adventure .adv-battle-info")).includes(await js("state.adventure.english.monsterTrait")));
   await click(battle+" .adv-scene-view");
   await ready(battle+".adv-orbit");
   await pause(150);
   const heroOrbit=await getHeroX();
   assert.ok(Math.abs(heroOrbit-heroBefore)>5,"perspective shifts actor projection");
-  assert.ok(await pixels()>15,"modeled view must contain colored geometry");
+  await until(async()=>await pixels()>20,"modeled view contains colored geometry");
   await js(`document.querySelector(${JSON.stringify(battle+" .adv-scene-view")}).dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowLeft",bubbles:true}))`);
   await until(async()=>Math.abs(await getHeroX()-heroOrbit)>2,"keyboard orbits the rendered camera");
   const xBeforeWheel = await getHeroX();
   await js(`${prepared}.dispatchEvent(new WheelEvent("wheel",{deltaY:-100,bubbles:true,cancelable:true}))`);
   await until(async()=>Math.abs(await getHeroX()-xBeforeWheel)>2,"wheel changes perspective distance");
   const xBeforeDrag = await getHeroX();
-  await cdp("Input.dispatchMouseEvent",{type:"mousePressed",x:585,y:327,button:"left",buttons:1,clickCount:1});
-  await cdp("Input.dispatchMouseEvent",{type:"mouseMoved",x:625,y:327,button:"left",buttons:1});
-  await cdp("Input.dispatchMouseEvent",{type:"mouseReleased",x:625,y:327,button:"left",buttons:0,clickCount:1});
+  const point = await js(`(() => {
+    const bounds = ${prepared}.getBoundingClientRect();
+    return {x:Math.round(bounds.left + bounds.width * .19), y:Math.round(bounds.top + bounds.height*.32)};
+  })()`);
+  await cdp("Input.dispatchMouseEvent",{type:"mousePressed",...point,button:"left",buttons:1,clickCount:1});
+  await cdp("Input.dispatchMouseEvent",{type:"mouseMoved",x:point.x+40,y:point.y,button:"left",buttons:1});
+  await cdp("Input.dispatchMouseEvent",{type:"mouseReleased",x:point.x+40,y:point.y,button:"left",buttons:0,clickCount:1});
   await until(async()=>Math.abs(await getHeroX()-xBeforeDrag)>2,"drag changes perspective angle");
   await shot("adventure-perspective");
   assert.equal(await js(`(async () => {
@@ -136,7 +147,8 @@ try {
     }
     return hashes.size;
   })()`),10,"all catalogued enemies produce different rendered silhouettes");
-  await scroll(camp);
+  await click('[data-adv-action="jump-camp"]');
+  assert.equal(await js("document.activeElement.closest('.adv-camp-links') !== null"),true);
   await ready(camp+'[data-renderer="webgl"]');
   assert.match(await text(camp),/Forge|Foundry/);
   await click(camp+" .adv-scene-view");
@@ -148,6 +160,13 @@ try {
   assert.match(await text("#adventure .adv-page"),/Steady Heart/);
   await click('#adventure nav [data-id="equipment"]');
   assert.match(await text("#adventure .adv-page"),/AttackPower|Attack Power|Attack/);
+  assert.equal(await js("Boolean(document.querySelector('.adv-catalog-workspace .adv-search') && document.querySelector('.adv-loadout-side .adv-slots'))"),true);
+  await js(`api("/api/settings",{language:"zh",appearance:"dark"})`);
+  await cdp("Emulation.setDeviceMetricsOverride",{width:730,height:850,deviceScaleFactor:1.5,mobile:false});
+  assert.ok(await js("document.documentElement.scrollWidth-innerWidth")<=1);
+  await shot("adventure-gear-dark-150dpi");
+  await js(`api("/api/settings",{language:"en",appearance:"light"})`);
+  await cdp("Emulation.setDeviceMetricsOverride",{width:1280,height:900,deviceScaleFactor:1,mobile:false});
   await click('#adventure nav [data-id="pets"]');
   assert.match(await text("#adventure .adv-page"),/Fortune Cat/);
   await click('#adventure nav [data-id="lottery"]');
@@ -171,8 +190,17 @@ try {
   await ready(battle+" .adv-hero img");
   assert.equal(await js(`Boolean(document.querySelector(${JSON.stringify(renderer)}))`),false);
   await click(battle+' [data-adv-action="actor"]');
-  assert.match(await text("#adventure .adv-battle-info"),/Balanced/);
+  assert.ok((await text("#adventure .adv-battle-info")).includes(await js("state.adventure.english.monsterTrait")));
   await shot("adventure-webgl-fallback");
+  await js(`api("/api/settings",{language:"zh",appearance:"dark"})`);
+  await cdp("Emulation.setDeviceMetricsOverride",{width:325,height:455,deviceScaleFactor:1.5,mobile:false});
+  await cdp("Page.navigate",{url:base+"?widget=calendar"});
+  await ready(".widget-calendar .widget-day");
+  await js(`api("/api/ledger/save",{kind:"income",accountID:state.accounts[0].id,categoryID:"salary-income",amount:1234.56})`);
+  await click('.widget-day[aria-current="date"]');
+  assert.match(await text(".widget-calendar-summary"),/1,234\.56/);
+  assert.ok(await js("document.documentElement.scrollWidth-innerWidth")<=1);
+  await shot("calendar-widget-dark-150dpi");
   assert.deepEqual(failures,[]);
   console.log("Adventure normal route, WebGL depth, original art, real attack animation, orbit and camp, English, observation, DPR 2 and fallback passed.");
 } finally {

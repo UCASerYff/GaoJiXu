@@ -1,6 +1,6 @@
 # 搞积蓄 Windows 版
 
-面向 Windows 10/11 x64 的独立应用版本 **4.06**。Windows 构建号为 **3**，命令行显示 `4.06+3`。
+面向 Windows 10/11 x64 的独立应用版本 **4.06**。Windows 构建号为 **4**，命令行显示 `4.06+4`。
 
 主窗口与五个小组件优先使用本机 Microsoft Edge 或 Chromium 的应用模式。找不到可用的应用模式入口时，在系统默认浏览器中打开。服务只监听 `127.0.0.1`。
 
@@ -8,14 +8,14 @@ Windows 桌面小组件可固定在前台、调整大小和位置、关闭或跳
 
 ## 安装
 
-双击 `GaoJiXu-Windows-4.06-x64.msi`，完成后从开始菜单打开「搞积蓄」。开始菜单还提供每日收支与积蓄、净资产、固定支出、权益打卡和勇者冒险小组件的独立入口。安装程序同时为当前 Windows 用户注册 `gaojixu://`。升级或卸载前可在应用中选择「退出」。
+双击构建 4 的发布安装包 `GaoJiXu-Windows-4.06-build4-x64.msi`，完成后从开始菜单打开「搞积蓄」。开始菜单还提供每日收支与积蓄、净资产、固定支出、权益打卡和勇者冒险小组件的独立入口。安装程序同时为当前 Windows 用户注册 `gaojixu://`。升级或卸载前可在应用中选择「退出」。
 
 安装程序将应用装在 `%LOCALAPPDATA%\GaoJiXu\`。通过 Windows「设置 → 应用」卸载，资料保留在原目录。此前的便携版与安装版使用相同的资料目录。
 
 下载后可以将计算结果与随包提供的 `.msi.sha256` 文件比对。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\GaoJiXu-Windows-4.06-x64.msi
+Get-FileHash -Algorithm SHA256 .\GaoJiXu-Windows-4.06-build4-x64.msi
 ```
 
 当前安装包无 Authenticode 签名。隔离安装已在 Windows 11 x64 上验证。Windows 10 x64 未使用独立虚拟机验证。
@@ -36,14 +36,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 
 GitHub Actions 在 Windows 运行器上构建并静默安装 MSI，验证两个 x64 程序、应用资源、适用的已有 Windows 资料、流水、月供数据库、财务快照及卸载保留资料。安装包和校验文件作为 `GaoJiXu-Windows-4.06-x64` 构建产物上传。
 
-在已有安装候选的工作区，可以用独立路径构建并验收新版。升级测试从旧 MSI 安装应用，写入隔离资料，再核对新版安装、降级保护和卸载保留资料。
+在已有安装候选的工作区，可以用独立路径构建并验收新版。升级测试从旧 MSI 安装应用，写入合成资料，再核对新版安装、降级保护和卸载保留资料。已安装正式版的 Windows 用户可用 `--isolate-identities` 为两份原始 MSI 生成临时实例转换。转换保留各自的版本和程序负载，使用独立的应用、升级家族和组件标识，并将临时安装目录和注册表键写入转换后的 MSI 表。测试实例禁用开始菜单快捷方式和 URI 协议注册。
 
 ```powershell
 cd windows
-$work = Join-Path $PWD 'build/release-4.06.3'
+$work = Join-Path $PWD 'build/release-4.06.4'
 $candidate = Join-Path $work 'candidate'
 .\build.ps1 -BuildDirectory $work -DistributionDirectory $candidate
-python tests/smoke_install.py "$candidate/GaoJiXu-Windows-4.06-x64.msi" --upgrade-from dist/GaoJiXu-Windows-4.06-x64.msi
+python tests/smoke_install.py "$candidate/GaoJiXu-Windows-4.06-x64.msi" --upgrade-from dist/4.06.3/GaoJiXu-Windows-4.06-x64.msi --isolate-identities
 ```
 
 只跑源码测试可使用以下命令。
@@ -83,7 +83,7 @@ PYTHONPATH=src python3 launch.py --data-dir /tmp/gaojixu-dev --no-browser --port
 | `--inspect` | 只读打印账户、流水、目标和等级条数，不打印备注 |
 | `--widget-snapshot` | 写出 schema 2 的 `gaojixu-widget.json` |
 | `--notify-monthly-change` | 在同一 Windows 会话中唤醒使用同一资料目录的月供接收器 |
-| `--version` | 打印 `4.06+3` |
+| `--version` | 打印 `4.06+4` |
 | `--widget TYPE` | 打开每日收支与积蓄 `calendar`、净资产 `net-worth`、固定支出 `expenses`、权益打卡 `benefits` 或勇者冒险 `adventure` 窗口 |
 
 ## 数据

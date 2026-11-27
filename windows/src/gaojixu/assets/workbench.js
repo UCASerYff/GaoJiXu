@@ -19,10 +19,18 @@ let viewRevision = 0;
 let pendingMutation = 0;
 let liveRefresh = false;
 let settingsFocus = false;
+const markupCache = new WeakMap();
+
+function updateMarkup(node, markup) {
+  if (markupCache.get(node) === markup) return;
+  node.innerHTML = markup;
+  markupCache.set(node, markup);
+}
 
 function routeFromHash() {
   const candidate = location.hash.slice(1);
-  return candidate && document.getElementById(candidate)?.parentElement?.id === "workbench" ? candidate : "overview";
+  const section = candidate && document.getElementById(candidate);
+  return section?.tagName === "SECTION" && section.parentElement?.id === "workbench" ? candidate : "overview";
 }
 function navigate(destination) {
   if (route === destination) return;
@@ -136,7 +144,39 @@ async function refreshGame(observation) {
   }
 }
 function showError(error) {
-  alert(error?.message || String(error));
+  const message = error?.message || String(error);
+  const opened = document.querySelector("dialog[open]:not(#decision)");
+  if (opened) {
+    let inline = opened.querySelector("#editor-error, .dialog-notice");
+    if (!inline) {
+      inline = document.createElement("p");
+      inline.className = "dialog-notice";
+      inline.setAttribute("role", "alert");
+      opened.append(inline);
+    }
+    inline.textContent = message;
+    inline.hidden = false;
+    return;
+  }
+  document.getElementById("feedback-title").textContent = t("操作未完成", "Action incomplete");
+  document.getElementById("feedback-content").textContent = message;
+  document.getElementById("feedback-dismiss").setAttribute("aria-label",t("关闭","Close"));
+  document.getElementById("feedback").hidden = false;
+}
+function confirmAction(message, {title, label, destructive = true} = {}) {
+  const dialog = document.getElementById("decision");
+  if (dialog.open) return Promise.resolve(false);
+  document.getElementById("decision-title").textContent = title || t("确认操作", "Confirm action");
+  document.getElementById("decision-content").textContent = message;
+  document.getElementById("decision-cancel").textContent = t("取消", "Cancel");
+  const button = document.getElementById("decision-confirm");
+  button.textContent = label || t("确认", "Confirm");
+  button.classList.toggle("danger", destructive);
+  dialog.returnValue = "";
+  return new Promise(resolve => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm"), {once:true});
+    dialog.showModal();
+  });
 }
 function navButton(id, title, current, symbol) {
   return '<button type="button" data-route="' + id + '" class="' + (current ? "active" : "") + '"' + (current ? ' aria-current="page"' : "") + ">" +
@@ -157,22 +197,42 @@ function render() {
   const appName = t("搞积蓄", "Gao Savings");
   document.title = window.GaoWidgets?.windowTitle(appName) || appName + " V" + version.split("+")[0];
   document.getElementById("brand-name").textContent = appName;
-  document.getElementById("brand-tagline").textContent = t("我的财务工作台", "My finance workspace");
-  document.getElementById("workspaces").innerHTML = workspaces.map(item => navButton(item[4][0], t(item[1], item[2]), item === workspace && route !== "widgets", item[3])).join("");
+  document.getElementById("context-workspace").textContent = route === "widgets" ? t("小组件", "Widgets") : t(workspace[1],workspace[2]);
+  const context = document.getElementById("context-section");
+  context.hidden = !(inFixed || sections[route]);
+  const fixedNames = fixedRoutes.find(item => item[0] === route)?.slice(1);
+  context.textContent = fixedNames ? t(...fixedNames) : sections[route] ? t(...sections[route]) : "";
+  const workspaceNav = document.getElementById("workspaces");
+  const subbar = document.getElementById("subbar");
+  const workspaceMarkup = workspaces.map(item => navButton(item[4][0], t(item[1], item[2]), item === workspace && route !== "widgets", item[3])).join("");
+  if (markupCache.get(workspaceNav) !== workspaceMarkup) {
+    subbar.remove();
+    updateMarkup(workspaceNav, workspaceMarkup);
+    const selected = workspaceNav.querySelector("button.active");
+    if (selected) selected.after(subbar);
+    else workspaceNav.append(subbar);
+  }
   const showSections = workspace[4].length > 1;
-  document.getElementById("subbar").hidden = !showSections;
-  document.getElementById("sections").innerHTML = showSections ? workspace[4].map(id => navButton(id, t(...sections[id]), id === canonical)).join("") : "";
+  subbar.hidden = !showSections;
+  updateMarkup(document.getElementById("sections"), showSections ? workspace[4].map(id => navButton(id, t(...sections[id]), id === canonical)).join("") : "");
   document.getElementById("fixed-bar").hidden = !inFixed;
-  document.getElementById("fixed-sections").innerHTML = inFixed ? fixedRoutes.map(([id, zh, en]) => navButton(id, t(zh, en), id === route)).join("") : "";
+  updateMarkup(document.getElementById("fixed-sections"), inFixed ? fixedRoutes.map(([id, zh, en]) => navButton(id, t(zh, en), id === route)).join("") : "");
+  const tools = document.getElementById("rail-tools");
+  tools.hidden = !ready || Boolean(gallery);
+  updateMarkup(tools,
+    '<button type="button" data-workbench="widgets" class="' + (route === "widgets" ? "active" : "") + '">' +
+    icon("square.grid.2x2.fill") + t("桌面小组件", "Desktop widgets") + '</button><button type="button" data-workbench="settings">' +
+    icon("gearshape") + t("设置", "Settings") + "</button>");
   renderToolbar(ready);
   const banner = document.getElementById("banner");
   banner.hidden = !state || (ready && !state.notice);
   if (!banner.hidden) {
-    banner.innerHTML = ready ? escapeHTML(state.notice) :
-      "<strong>" + (state.status === "missing" ? t("还没有资料库", "No library yet") : t("资料库只读保护", "Library protected")) + "</strong>" +
+    const symbol = state.status === "missing" ? "tray.full.fill" : "shield";
+    banner.innerHTML = ready ? icon("info.circle") + "<strong>" + escapeHTML(state.notice) + "</strong>" :
+      icon(symbol) + "<div><strong>" + (state.status === "missing" ? t("创建资料库", "Create a library") : t("资料库只读保护", "Library protected")) + "</strong>" +
       (state.notice ? "<p>" + escapeHTML(state.notice) + "</p>" : "") +
-      (state.status === "missing" && !gallery ? '<p><button data-workbench="create">' + t("创建我的资料库", "Create my library") + "</button></p>" : "") +
-      (gallery ? '<p><a href="/" target="_blank" rel="noopener">' + t("打开搞积蓄", "Open Gao Savings") + "</a></p>" : "");
+      (state.status === "missing" && !gallery ? '<button data-workbench="create">' + t("创建我的资料库", "Create my library") + "</button>" : "") +
+      (gallery ? '<p><a href="/" target="_blank" rel="noopener">' + t("打开搞积蓄", "Open Gao Savings") + "</a></p>" : "") + "</div>";
   }
   for (const section of document.querySelectorAll("#workbench > section")) section.hidden = !ready || section.id !== route;
   if (!ready) return;
@@ -184,7 +244,7 @@ function render() {
 function renderToolbar(ready) {
   const node = document.getElementById("toolbar");
   const wasOpen = node.querySelector("details")?.open;
-  node.innerHTML = (ready ? '<button class="record-button" data-workbench="record">' + icon("plus") + t("记一笔", "Record") + "</button>" : "") +
+  updateMarkup(node,(ready ? '<button class="record-button" data-workbench="record">' + icon("plus") + t("记一笔", "Record") + "</button>" : "") +
     '<details class="toolbar-menu"><summary aria-label="' + t("更多", "More") + '" title="' + t("更多", "More") + '">' + icon("ellipsis.circle") + "</summary>" +
     '<div class="menu-panel">' +
     (ready ? '<button data-workbench="record">' + t("记录收支或转账", "Record income, expense or transfer") + '</button><button data-workbench="savings"' +
@@ -192,7 +252,7 @@ function renderToolbar(ready) {
       '</button><hr><button data-workbench="import">' + t("导入流水 CSV", "Import Transactions CSV") + '</button><button data-workbench="export">' +
       t("导出流水 CSV", "Export Transactions CSV") + '</button><button data-workbench="widgets">' + t("小组件", "Widgets") + "</button><hr>" : "") +
     (ready ? '<button data-workbench="settings">' + t("设置", "Settings") + "</button>" : "") +
-    '<button data-workbench="quit">' + t("退出搞积蓄", "Quit Gao Savings") + "</button></div></details>";
+    '<button data-workbench="quit">' + t("退出搞积蓄", "Quit Gao Savings") + "</button></div></details>");
   if (wasOpen) node.querySelector("details").open = true;
 }
 function openEditor({title, subtitle = "", body, submitLabel, onSubmit, onOpen, width}) {
@@ -210,14 +270,19 @@ function openEditor({title, subtitle = "", body, submitLabel, onSubmit, onOpen, 
   const submit = document.getElementById("editor-submit");
   submit.hidden = !onSubmit;
   submit.disabled = false;
-  submit.textContent = submitLabel || t("保存", "Save");
+  const normalLabel = submitLabel || t("保存", "Save");
+  submit.textContent = normalLabel;
   document.getElementById("editor-cancel").textContent = onSubmit ? t("取消", "Cancel") : t("完成", "Done");
+  document.getElementById("editor-close").setAttribute("aria-label",t("关闭","Close"));
   const error = document.getElementById("editor-error");
   error.hidden = true;
   form.onsubmit = async event => {
     event.preventDefault();
     if (!onSubmit || submit.disabled) return;
     submit.disabled = true;
+    const savingLabel = t("处理中…","Working…");
+    submit.textContent = savingLabel;
+    form.setAttribute("aria-busy","true");
     error.hidden = true;
     try {
       if (await onSubmit(form) !== false) closeEditor();
@@ -226,6 +291,8 @@ function openEditor({title, subtitle = "", body, submitLabel, onSubmit, onOpen, 
       error.hidden = false;
     } finally {
       submit.disabled = false;
+      if (submit.textContent === savingLabel) submit.textContent = normalLabel;
+      form.removeAttribute("aria-busy");
     }
   };
   if (!dialog.open) {
@@ -245,33 +312,54 @@ function openSettings() {
   const appearance = [["system","跟随系统","System"],["light","浅色","Light"],["dark","深色","Dark"]];
   const languages = [["system","跟随系统","System"],["zh","简体中文","Simplified Chinese"],["en","英文","English"]];
   const choose = (items, val) => items.map(([id, zh, en]) => '<option value="' + id + '"' + (val === id ? " selected" : "") + ">" + t(zh,en) + "</option>").join("");
-  const colors = state.currencies.map(row => '<option value="' + row.id + '"' + (state.currency === row.id ? " selected" : "") + ">" + escapeHTML(row.name + " · " + row.id) + "</option>").join("");
+  const displayCurrency = new Intl.DisplayNames(["en"], {type:"currency"});
+  const colors = state.currencies.map(row => '<option value="' + row.id + '"' + (state.currency === row.id ? " selected" : "") + ">" +
+    escapeHTML(t(row.name,displayCurrency.of(row.id)) + " · " + row.id) + "</option>").join("");
   const tint = /^#[\dA-Fa-f]{6}$/.test(current.backgroundHex || "") ? current.backgroundHex : "";
   settingsFocus = true;
   openEditor({
-    title:t("设置","Settings"), width:720,
-    body:'<div class="segmented settings-tabs" role="group" aria-label="' + t("设置分类","Settings sections") + '">' +
-      '<button type="button" class="active" data-settings="module">' + t("模块设置","Module settings") + '</button>' +
-      '<button type="button" data-settings="appearance">' + t("外观","Appearance") + '</button>' +
-      '<button type="button" data-settings="data">' + t("数据","Data") + '</button></div>' +
-      '<div data-settings-panel="module"><div class="form-section settings-fields"><label>' + t("新目标默认币种","Default currency for new goals") + '<select name="currency">' + colors +
-      '</select></label><label class="check-row"><input type="checkbox" name="budgetRollover"' + (current.budgetRolloverEnabled ? " checked" : "") + ">" +
-      t("预算滚存上月结余","Roll over last month’s budget surplus") + '</label><div class="row"><label>' + t("画布色调","Canvas tint") +
-      '<input type="color" name="tint" value="' + (tint || "#f6f3ea") + '"></label><input type="hidden" name="backgroundHex" value="' + tint +
-      '"><button type="button" id="reset-tint" class="ghost">' + t("恢复默认","Reset") + '</button></div></div><div class="form-section"><h3>' +
-      t("隐私与资金安全","Privacy & Safety") + '</h3><p>' + t("所有记录只保存在本机。无需登录。", "Everything stays on this PC. No sign-in is required.") +
-      '</p><p>' + t("本应用不连接银行，不会发起真实银行交易。", "The app never connects to banks or initiates real transactions.") +
-      '</p><p>' + t("免费抽奖只消耗游戏星券。", "Free draws spend in-game tickets.") + '</p></div></div>' +
-      '<div data-settings-panel="appearance" hidden><div class="form-section settings-fields"><label>' + t("语言","Language") + '<select name="language">' +
-      choose(languages,current.language) + '</select></label><label>' + t("外观","Appearance") + '<select name="appearance">' +
-      choose(appearance,current.appearance) + '</select></label><div>' + t("版本","Version") + " " + escapeHTML(version) + "</div></div></div>" +
-      '<div data-settings-panel="data" hidden><div class="form-section"><h3>' + t("现用资料","Active files") + "</h3><p>" +
-      t("账本、固定收支、游戏进度及小组件快照都保存在本机。","Your ledger, recurring finances, game progress, and widget snapshots stay on this PC.") +
-      '</p><div class="row settings-location"><button type="button" class="ghost" data-folder="library">' + t("打开数据目录","Open data folder") +
-      '</button><button type="button" class="ghost" data-folder="widgets">' + t("打开小组件共享目录","Open widget snapshot folder") +
-      '</button></div></div><div class="form-section"><h3>' + t("隐私","Privacy") + "</h3><p>" +
-      t("源码与安装包不包含本机业务记录。","The source and installer contain no personal records.") + "</p></div></div>",
-    submitLabel:t("完成","Done"),
+    title:t("设置","Settings"), width:690,
+    body:`<div class="settings-layout">
+      <div class="segmented settings-tabs" role="group" aria-label="${t("设置分类","Settings sections")}">
+        <button type="button" class="active" aria-pressed="true" data-settings="module">${icon("slider.horizontal.3")}${t("记账","Ledger")}</button>
+        <button type="button" aria-pressed="false" data-settings="appearance">${icon("square.grid.2x2.fill")}${t("外观","Appearance")}</button>
+        <button type="button" aria-pressed="false" data-settings="data">${icon("tray.full.fill")}${t("资料","Data")}</button>
+      </div>
+      <div class="settings-tab-content">
+        <div data-settings-panel="module">
+          <div class="form-section settings-fields">
+            <label class="field-wide">${t("新目标默认币种","Default currency for new goals")}<select name="currency">${colors}</select></label>
+            <label class="check-row field-wide"><input type="checkbox" name="budgetRollover"${current.budgetRolloverEnabled ? " checked" : ""}>
+              ${t("预算滚存上月结余","Roll over last month’s budget surplus")}</label>
+          </div>
+        </div>
+        <div data-settings-panel="appearance" hidden>
+          <div class="form-section settings-fields">
+            <label>${t("界面语言","Language")}<select name="language">${choose(languages,current.language)}</select></label>
+            <label>${t("显示主题","Theme")}<select name="appearance">${choose(appearance,current.appearance)}</select></label>
+            <div class="settings-row field-wide">
+              <strong>${t("工作区底色","Workspace tint")}</strong>
+              <div class="settings-tint">
+                <input aria-label="${t("工作区底色","Workspace tint")}" type="color" name="tint" value="${tint || "#f2f6f5"}">
+                <input type="hidden" name="backgroundHex" value="${tint}">
+                <button type="button" id="reset-tint" class="ghost">${t("恢复默认","Reset")}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div data-settings-panel="data" hidden>
+          <div class="form-section">
+            <div class="settings-row"><div><strong>${t("业务资料","App data")}</strong><p class="muted">${t("账本、固定收支和冒险进度","Ledger, recurring finances and game progress")}</p></div>
+              <button type="button" class="ghost" data-folder="library">${t("打开目录","Open folder")}</button></div>
+            <div class="settings-row"><div><strong>${t("小组件快照","Widget snapshots")}</strong><p class="muted">${t("桌面小组件的财务快照","Financial snapshots for desktop widgets")}</p></div>
+              <button type="button" class="ghost" data-folder="widgets">${t("打开目录","Open folder")}</button></div>
+          </div>
+          <p class="muted">${t("业务资料仅保存在本机，不连接银行。","Your records stay on this PC. The app has no bank connection.")}</p>
+        </div>
+        <small class="settings-version">V${escapeHTML(version)}</small>
+      </div>
+    </div>`,
+    submitLabel:t("保存设置","Save settings"),
     onOpen(form) {
       for (const tab of form.querySelectorAll("[data-settings]")) {
         tab.onclick = () => {
@@ -289,7 +377,7 @@ function openSettings() {
       color.oninput = () => form.elements.backgroundHex.value = color.value;
       form.querySelector("#reset-tint").onclick = () => {
         form.elements.backgroundHex.value = "";
-        color.value = "#f6f3ea";
+        color.value = "#f2f6f5";
       };
     },
     async onSubmit(form) {
@@ -300,8 +388,16 @@ function openSettings() {
   });
 }
 document.addEventListener("click", event => {
+  for (const menu of document.querySelectorAll(".fixed-item-menu[open]")) {
+    if (!menu.contains(event.target)) menu.open = false;
+  }
   const nav = event.target.closest("#workspaces [data-route], #sections [data-route], #fixed-sections [data-route]");
-  if (nav && !nav.classList.contains("active")) navigate(nav.dataset.route);
+  if (nav && !nav.classList.contains("active")) {
+    const group = nav.parentElement;
+    const destination = nav.dataset.route;
+    navigate(destination);
+    if (event.detail === 0) group.querySelector("[data-route].active")?.focus();
+  }
   const command = event.target.closest("[data-workbench]");
   const details = document.querySelector(".toolbar-menu");
   if (details && (!details.contains(event.target) || command)) details.open = false;
@@ -314,15 +410,24 @@ document.addEventListener("click", event => {
     export: () => window.GaoFinance?.exportCSV(),
     widgets: () => navigate("widgets"),
     settings: openSettings,
+    retry: loadWorkbench,
     async quit() {
       await api("/api/shutdown");
       document.getElementById("workbench").textContent = t("搞积蓄已退出。","Gao Savings has closed.");
       document.querySelector(".app-chrome").hidden = true;
+      document.body.dataset.session = "closed";
     }
   };
   Promise.resolve().then(actions[command.dataset.workbench]).catch(showError);
 });
 document.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    const menu = document.querySelector(".toolbar-menu[open], .fixed-item-menu[open]");
+    if (menu) {
+      menu.open = false;
+      menu.querySelector("summary")?.focus();
+    }
+  }
   if (!event.ctrlKey || event.altKey || event.metaKey || event.repeat) return;
   if (event.key === "," || (event.key.toLowerCase() === "n" && state?.status === "ready")) {
     event.preventDefault();
@@ -333,14 +438,21 @@ document.addEventListener("keydown", event => {
     }
   }
 });
+function loadWorkbench() {
+  const banner = document.getElementById("banner");
+  banner.hidden = false;
+  banner.innerHTML = '<span class="state-spinner" aria-hidden="true"></span><strong>' + t("正在读取资料…","Loading records…") + "</strong>";
+  return refresh().catch(error => {
+    banner.innerHTML = icon("exclamationmark.triangle") + "<div><strong>" + t("无法连接到本机服务","Local service unavailable") +
+      "</strong><p>" + escapeHTML(error.message) + '</p><button data-workbench="retry">' + t("重新读取","Retry") + "</button></div>";
+  });
+}
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("editor-cancel").onclick = closeEditor;
+  document.getElementById("editor-close").onclick = closeEditor;
+  document.getElementById("feedback-dismiss").onclick = () => { document.getElementById("feedback").hidden = true; };
   document.getElementById("editor").addEventListener("close", () => { settingsFocus = false; });
-  refresh().catch(error => {
-    const banner = document.getElementById("banner");
-    banner.textContent = error.message;
-    banner.hidden = false;
-  });
+  loadWorkbench();
   if (gallery) document.getElementById("toolbar").hidden = true;
   setInterval(() => {
     if (!document.hidden && state?.status === "ready" && !pendingMutation && !liveRefresh &&

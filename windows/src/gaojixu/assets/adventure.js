@@ -141,9 +141,11 @@
   }
 
   function battleInfo(data) {
-    return `<div class="adv-health"><div class="adv-tone-green"><div><strong>${t("勇者", "Hero")}</strong><span>${number(data.heroHP)} / ${number(data.heroMaxHP)}</span></div>${progress(t("勇者生命", "Hero Health"), data.heroHP, data.heroMaxHP)}</div>
-      <div class="adv-tone-red"><div><strong>${t("怪物", "Enemy")}</strong><span>${number(data.monsterHP)} / ${number(data.monsterMaxHP)}</span></div>${progress(t("怪物生命", "Enemy Health"), data.monsterHP, data.monsterMaxHP)}</div></div>
-      <div class="adv-split adv-power"><strong>${t(`勇者战力 ${number(data.power)}`, `Hero power ${number(data.power)}`)}</strong><strong>${t(`敌方战力 ${number(data.monsterPower)}`, `Enemy power ${number(data.monsterPower)}`)}</strong></div>
+    const combatant = (name, hpLabel, hp, maximum, power, tone) =>
+      `<div class="adv-combatant adv-tone-${tone}"><div class="adv-combatant-title"><strong>${h(name)}</strong><small>${t("战力","Power")} <b>${number(power)}</b></small></div>
+      <div class="adv-combatant-health">${progress(hpLabel,hp,maximum)}<span>${number(hp)} / ${number(maximum)}</span></div></div>`;
+    return `<div class="adv-health">${combatant(t("勇者","Hero"),t("勇者生命","Hero health"),data.heroHP,data.heroMaxHP,data.power,"green")}
+      ${combatant(localized(data,"monster"),t("怪物生命","Enemy health"),data.monsterHP,data.monsterMaxHP,data.monsterPower,"red")}</div>
       <small class="adv-battle-msg">${h(selectedMonster ? `${localized(data,"monsterTrait")} · ${localized(data,"monsterTraitDetail")}` : localized(data,"message"))}</small>`;
   }
 
@@ -161,13 +163,14 @@
   }
 
   function battleTotals(data) {
-    return [stat(t("勇者等级", "Hero Level"), `Lv.${data.level}`, "bolt.fill", "green"), stat(t("当前关卡", "Current Stage"), number(data.stage), "flag.checkered", "red"),
-      stat(t("本关重开", "Stage Retries"), number(data.attempts), "arrow.counterclockwise", "purple"), stat(t("累计过关", "Stages Cleared"), number(data.defeated), "forward.fill", "orange")].join("");
+    return [stat(t("本关重开", "Stage Retries"), number(data.attempts), "arrow.counterclockwise", "purple"),
+      stat(t("累计过关", "Stages Cleared"), number(data.defeated), "forward.fill", "orange")].join("");
   }
 
   function monsterReport(data) {
-    return `<div class="adv-split"><h3>${t("当前怪物", "Current Enemy")}</h3><div class="adv-trait"><strong>${h(localized(data,"monsterTrait"))}</strong><small>${h(localized(data,"monsterTraitDetail"))}</small></div></div>
-      <small>${h(localized(data,"monsterChapter"))} · ${t(`第 ${number(data.stage)} 关`, `Stage ${number(data.stage)}`)}</small><hr><h3>${t("最近战报", "Recent Battle Reports")}</h3>${data.events.map(eventRow).join("")}`;
+    return `<div class="adv-encounter"><strong>${h(localized(data,"monsterTrait"))}</strong><small>${h(localized(data,"monsterTraitDetail"))}</small></div>
+      <h3>${t("最近战报", "Recent Battle Reports")}</h3>
+      <div class="adv-report-list">${data.events.length ? data.events.map(eventRow).join("") : `<small>${t("战果将记录在这里。","Battle results will appear here.")}</small>`}</div>`;
   }
 
   function mapPage(data) {
@@ -179,12 +182,29 @@
       [t("积蓄兑换星券", "Save to Earn Tickets"), t("每积蓄 1 个货币单位获得 1 张星券，完成目标额外获得 100 张", "Earn 1 ticket per currency unit saved and 100 extra for completing a goal."), "arrow.down.circle.fill"],
       [t("词条与绝技", "Modifiers and Signatures"), t("装备词条和技能绝技会真实改变攻防、回复与奖励", "Equipment modifiers and signature moves affect damage, defense, healing, and rewards."), "sparkles"],
     ];
-    return `<article class="adv-panel adv-battle"><div class="adv-split adv-world-title"><div><strong>${symbol("flag.checkered")} <span data-adv-stage>${t(`第 ${number(data.stage)} 关`, `Stage ${number(data.stage)}`)}</span></strong><small data-adv-chapter>${h(localized(data,"monsterChapter"))}</small></div><small class="adv-tone-green">${symbol("forward.fill")} ${t("每秒自动攻击", "Auto-attacks every second")}</small></div>
-      ${battleScene(data, true)}<div class="adv-battle-info">${battleInfo(data)}</div></article>
-      <article class="adv-panel adv-camp"><div class="adv-split adv-world-title"><strong>${symbol("tent.fill")} ${t("远征营地", "Expedition Camp")}</strong><small>${t("点击建筑进入装备、技能、宠物或祈愿", "Select a building for Equipment, Techniques, Pets, or Wishes")}</small></div>${campScene()}</article>
-      <div class="adv-stats adv-battle-totals">${battleTotals(data)}</div>
-      <div class="adv-columns"><article class="adv-panel"><h3>${t("无限自动战斗规则", "Automatic Battles")}</h3>${rules.map(([title, detail, glyph]) => eventRow({title, detail, symbol: glyph})).join("")}</article>
-      <article class="adv-panel adv-monster-report">${monsterReport(data)}</article></div>`;
+    return `<div class="adv-map-layout">
+      <article class="adv-panel adv-battle">
+        <header class="adv-world-title"><div><h2 data-adv-chapter>${h(localized(data,"monsterChapter"))}</h2><span data-adv-stage>${t(`第 ${number(data.stage)} 关`, `Stage ${number(data.stage)}`)}</span></div>
+          ${btn(t("营地","Camp"),"jump-camp","",{plain:true,icon:"tent.fill"})}</header>
+        ${battleScene(data, true)}
+      </article>
+      <aside class="adv-operations" aria-label="${t("战况和进度","Battle status and progress")}">
+        <section class="adv-panel adv-monitor">
+          <div class="adv-split"><h3>${t("战况","Battle status")}</h3><small class="adv-live"><i></i>${t("自动战斗","Auto battle")}</small></div>
+          <div class="adv-battle-info">${battleInfo(data)}</div>
+          <div class="adv-stats adv-battle-totals">${battleTotals(data)}</div>
+        </section>
+        <section class="adv-panel adv-monster-report">${monsterReport(data)}</section>
+      </aside>
+      <article id="adv-expedition-camp" class="adv-panel adv-camp">
+        <header class="adv-world-title"><h2>${t("远征营地", "Expedition Camp")}</h2></header>
+        ${campScene()}
+        <div class="adv-camp-links">${camp.map(([key,zh,en],index) => btn(t(zh,en),"tab",key,{
+          icon:["shield.fill","scroll.fill","pawprint.fill","gift.fill"][index]})).join("")}</div>
+      </article>
+      <details class="adv-panel adv-rules"><summary>${t("自动战斗与奖励规则","Automatic combat and rewards")}</summary>
+        <div>${rules.map(([title,detail,glyph]) => eventRow({title,detail,symbol:glyph})).join("")}</div>
+      </details></div>`;
   }
 
   function selectFilter(key, label, options, currentValue) {
@@ -224,13 +244,17 @@
   function equipmentPage(data) {
     const breakdown = data.powerBreakdown;
     const gear = Object.fromEntries(data.gear.map(item => [item.id, item]));
-    return `<article class="adv-panel"><div class="adv-split adv-character-heading"><h3>${t("角色 15 维战斗属性", "15 Combat Attributes")}</h3><div><strong>${t(`总战力 ${number(data.power)}`, `Total Power ${number(data.power)}`)}</strong><small>${t(`基础 ${number(breakdown.base)} · 装备 ${number(breakdown.equipment)} · 技能 ${number(breakdown.techniques)} · 宠物 ${number(breakdown.pets)}`, `Base ${number(breakdown.base)} · Equipment ${number(breakdown.equipment)} · Techniques ${number(breakdown.techniques)} · Pets ${number(breakdown.pets)}`)}</small></div></div>
-      ${attributes(data.attributes)}${data.affixes.length ? `<h4>${t("生效词条", "Active Modifiers")}</h4><div class="adv-affix-list">${data.affixes.map(item => `<span title="${h(localized(item,"detail"))}">${symbol(item.symbol)} ${h(localized(item,"name"))} · ${h(localized(item,"detail"))}</span>`).join("")}</div>` : ""}</article>
-      <article class="adv-panel"><div class="adv-split adv-slot-header"><h3>${t("角色装备 · 14 个部位", "Equipment · 14 Slots")}</h3><div class="adv-actions"><span class="adv-tone-purple">${symbol("sparkles")} ${t(`${number(resources().stardust)} 星尘`, `${number(resources().stardust)} stardust`)}</span>
-      ${btn(t("一键装备", "Auto-equip"), "equip-best", "", {primary: true})}${btn(t("清理重复装备", "Sell Duplicates"), "request-duplicates")}${rarityMenu(t("一键出售", "Bulk Sell"), "request-sale", true)}</div></div>
-      <small>${t("一键装备按未强化初始战力比较 · 点击装备格可卸下", "Auto-equip compares base power. Select an equipped slot to remove its item.")}</small>
-      <div class="adv-slots">${data.slots.map(slot => loadoutSlot(localized(slot,"name"), gear[data.equipped[slot.id]], slot.symbol, t("空", "Empty"), "unequip", slot.id, true)).join("")}</div></article>
-      ${filterBar(data, "equipment")}<div data-adv-collection></div>`;
+    return `<div class="adv-loadout-layout">
+      <article class="adv-panel adv-loadout-side"><div class="adv-split adv-slot-header"><h2>${t("角色装备", "Equipped Gear")}</h2><small class="adv-tone-purple">${symbol("sparkles")} ${t(`${number(resources().stardust)} 星尘`, `${number(resources().stardust)} stardust`)}</small></div>
+      <div class="adv-actions">
+      ${btn(t("一键装备", "Auto-equip"), "equip-best", "", {primary: true})}${btn(t("清理重复装备", "Sell Duplicates"), "request-duplicates")}${rarityMenu(t("一键出售", "Bulk Sell"), "request-sale", true)}</div>
+      <small>${t("按初始战力装备。点击部位卸下。","Auto-equip compares base power. Select a slot to unequip.")}</small>
+      <div class="adv-slots">${data.slots.map(slot => loadoutSlot(localized(slot,"name"), gear[data.equipped[slot.id]], slot.symbol, t("空", "Empty"), "unequip", slot.id, true)).join("")}</div>
+      <details class="adv-build-details"><summary>${t(`攻击与角色属性 · 战力 ${number(data.power)}`, `Attack and attributes · Power ${number(data.power)}`)}</summary>
+        <small>${t(`基础 ${number(breakdown.base)} · 装备 ${number(breakdown.equipment)} · 技能 ${number(breakdown.techniques)} · 宠物 ${number(breakdown.pets)}`, `Base ${number(breakdown.base)} · Equipment ${number(breakdown.equipment)} · Techniques ${number(breakdown.techniques)} · Pets ${number(breakdown.pets)}`)}</small>
+        ${attributes(data.attributes)}${data.affixes.length ? `<h4>${t("生效词条", "Active Modifiers")}</h4><div class="adv-affix-list">${data.affixes.map(item => `<span title="${h(localized(item,"detail"))}">${symbol(item.symbol)} ${h(localized(item,"name"))} · ${h(localized(item,"detail"))}</span>`).join("")}</div>` : ""}</details></article>
+      <section class="adv-catalog-workspace"><header class="adv-panel adv-catalog-toolbar"><h2>${t("装备图鉴","Equipment Collection")}</h2>
+        ${filterBar(data, "equipment")}</header><div data-adv-collection></div></section></div>`;
   }
 
   function loadoutSlot(label, item, glyph, empty, action, id, gear = false) {
@@ -251,11 +275,13 @@
   function techniquePage(data) {
     const learned = Object.fromEntries(data.techniques.map(item => [item.id, item]));
     return `<div class="adv-stats">${stat(t("可用悟性", "Available Insight"), number(resources().insight), "lightbulb.fill", "purple")}${stat(t("已学 / 总技能", "Learned / Total"), `${data.techniques.length}/${data.techniqueCount}`, "scroll.fill", "orange")}${stat(t("装配技能战力", "Technique Power"), number(data.powerBreakdown.techniques), "bolt.shield.fill", "red")}${stat(t("已装配流派", "Equipped Techniques"), `${data.equippedTechniques.length}/12`, "square.grid.2x2.fill", "green")}</div>
-      <article class="adv-panel"><div class="adv-split adv-slot-header"><h3>${t("当前构筑 · 最多 12 门", "Build · Up to 12 Techniques")}</h3><div class="adv-actions">${btn(t("一键装配", "Auto-equip"), "technique-best", "", {primary: true})}${rarityMenu(t("一键遗忘", "Bulk Forget"), "request-forget", false)}</div></div>
+      <div class="adv-loadout-layout"><article class="adv-panel adv-loadout-side"><div class="adv-split adv-slot-header"><h2>${t("已装配技能", "Technique Loadout")}</h2><div class="adv-actions">${btn(t("一键装配", "Auto-equip"), "technique-best", "", {primary: true})}${rarityMenu(t("一键遗忘", "Bulk Forget"), "request-forget", false)}</div></div>
       <small>${t("按 1 重初始战力选择 · 只有装配的技能会生效", "Auto-equip compares rank 1 power. Only equipped techniques are active.")}</small><div class="adv-slots">${Array.from({length: 12}, (_, index) => {
         const id = data.equippedTechniques[index] || "";
         return loadoutSlot(t(`第 ${index + 1} 格`, `Slot ${index + 1}`), learned[id], "plus", t("空技能位", "Empty Slot"), "unequip-technique", id);
-      }).join("")}</div></article>${filterBar(data, "technique")}<div data-adv-collection></div>`;
+      }).join("")}</div></article>
+      <section class="adv-catalog-workspace"><header class="adv-panel adv-catalog-toolbar"><h2>${t("技能图鉴","Technique Collection")}</h2>
+        ${filterBar(data,"technique")}</header><div data-adv-collection></div></section></div>`;
   }
 
   function techniqueCard(item, data) {
@@ -320,16 +346,17 @@
       ownedPetsAtSort = data.pets.length;
     }
     const hatch = data.latestPetHatch;
-    return `<div class="adv-stats">${stat(t("可用金币", "Available Gold"), number(resources().coins), "dollarsign.circle.fill", "orange")}${stat(t("宠物图鉴", "Pet Collection"), `${data.pets.length} / ${data.petCatalog.length}`, "pawprint.fill", "teal")}${stat(t("上阵宠物", "Active Pets"), `${team.length} / 4`, "person.3.fill", "blue")}${stat(t("宠物总战力", "Total Pet Power"), number(data.powerBreakdown.pets), "bolt.shield.fill", "red")}</div>
-      <article class="adv-panel adv-pet-hatch"><div><h3>${symbol("circle.hexagongrid.fill")} ${t("宠物蛋孵化", "Hatch a Pet Egg")}</h3><p>${t("每枚宠物蛋消耗 10,000 金币，十二种伙伴等概率出现。", "Each egg costs 10,000 gold. All 12 companions are equally likely.")}</p><small>${t("重复宠物自动升星：1 星幼年体、2 星成年体、3–99 星完全体；99 星后再重复转化为 10,000 金币。", "Duplicates increase stars: 1 Juvenile, 2 Adult, 3–99 Full Form. At 99 stars, duplicates convert to 10,000 gold.")}</small></div>
+    const hatchPanel = `<article class="adv-panel adv-pet-hatch"><div><h3>${symbol("circle.hexagongrid.fill")} ${t("宠物蛋孵化", "Hatch a Pet Egg")}</h3><p>${t("每枚消耗 10,000 金币，十二种伙伴等概率出现。", "Each egg costs 10,000 gold. All 12 companions are equally likely.")}</p></div>
       ${hatch && pets[hatch.petID] ? `<div class="adv-latest-pet">${petSprite(pets[hatch.petID])}<div><small>${t("最新孵化", "Last Hatch")}</small><strong>${h(localized(hatch,"name"))}</strong><small>${h(localized(hatch,"result"))}</small></div></div>` : ""}
-      ${btn(t("孵化一枚", "Hatch an Egg"), "request-hatch", "", {primary: true, icon: "sparkles", disabled: resources().coins < 10000})}</article>
-      <article class="adv-panel"><div class="adv-split adv-slot-header"><div><h3>${t("出战队伍 · 最多 4 只", "Party · Up to 4 Pets")}</h3><small>${t("宠物属性和战力直接计入角色总战力。", "Pet stats and power contribute directly to your hero’s total.")}</small></div>${btn(t("一键上阵", "Auto-select Party"), "pet-best", "", {primary: true})}</div>
+      ${btn(t("孵化一枚", "Hatch an Egg"), "request-hatch", "", {primary: true, icon: "sparkles", disabled: resources().coins < 10000})}
+      <details class="adv-build-details"><summary>${t("升星规则","Star progression")}</summary><small>${t("重复宠物自动升星：1 星幼年体、2 星成年体、3–99 星完全体。满星后再重复返还 10,000 金币。", "Duplicates add stars: 1 Juvenile, 2 Adult, 3–99 Full Form. Duplicates at 99 stars return 10,000 gold.")}</small></details></article>`;
+    return `<div class="adv-stats">${stat(t("可用金币", "Available Gold"), number(resources().coins), "dollarsign.circle.fill", "orange")}${stat(t("宠物图鉴", "Pet Collection"), `${data.pets.length} / ${data.petCatalog.length}`, "pawprint.fill", "teal")}${stat(t("上阵宠物", "Active Pets"), `${team.length} / 4`, "person.3.fill", "blue")}${stat(t("宠物总战力", "Total Pet Power"), number(data.powerBreakdown.pets), "bolt.shield.fill", "red")}</div>
+      <div class="adv-pet-setup"><article class="adv-panel"><div class="adv-split adv-slot-header"><div><h3>${t("出战队伍 · 最多 4 只", "Party · Up to 4 Pets")}</h3><small>${t("宠物属性计入角色总战力。", "Pet stats contribute to your hero’s power.")}</small></div>${btn(t("一键上阵", "Auto-select Party"), "pet-best", "", {primary: true})}</div>
       <div class="adv-team">${Array.from({length: 4}, (_, index) => {
         const pet = pets[team[index]];
         return pet ? `<button type="button" class="adv-pet-slot" data-adv-action="unequip-pet" data-id="${h(pet.id)}">${petSprite(pet)}<span><strong>${h(localized(pet,"name"))}</strong><small>★${pet.stars} · ${number(pet.power)}</small><small>${t("点击下阵", "Select to remove")}</small></span></button>`
           : `<div class="adv-pet-slot adv-pet-empty">${symbol("plus.circle.dashed")} <small>${t(`宠物位 ${index + 1}`, `Pet slot ${index + 1}`)}</small></div>`;
-      }).join("")}</div></article>
+      }).join("")}</div></article>${hatchPanel}</div>
       <div class="adv-split adv-pet-catalog-heading"><h3>${t("宠物背包与图鉴", "Pets and Collection")}</h3><small>${t("已拥有和已上阵优先显示 · 每升 1 星，战力增幅都会提高", "Owned and active pets appear first. Power increases with each star.")}</small></div>
       <div class="adv-card-grid adv-pet-grid">${petOrder.map(id => {
         const pet = pets[id];
@@ -351,24 +378,24 @@
     const label = pool === "equipment" ? t("装备","Equipment") : t("技能","Technique");
     const balance = resources();
     const rates = ["", t("其余", "Remaining"), "32%", "14%", "5%", "1%", "0.01%", "0.0001%"];
-    return `<article class="adv-panel adv-lottery">${iconTile("gift.fill", "adv-lottery-icon")}<h2>${t("积蓄祈愿", "Savings Wishes")}</h2>
+    return `<div class="adv-wish-layout"><article class="adv-panel adv-lottery"><div class="adv-wish-heading">${iconTile("gift.fill", "adv-lottery-icon")}<h2>${t("积蓄祈愿", "Savings Wishes")}</h2></div>
       <p>${t("装备池和技能池相互独立。每积蓄 1 个货币单位获得 1 张星券，完成目标额外获得 100 张，也可用击杀所得金币购买。", "Equipment and technique pools are independent. Earn 1 ticket per currency unit saved and 100 more for completing a goal. You can also exchange battle gold for tickets.")}</p>
+      <div class="adv-actions adv-wish-totals"><strong class="adv-tone-orange">${symbol("ticket.fill")} ${t(`${number(balance.tickets)} 张星券`, `${number(balance.tickets)} tickets`)}</strong><strong class="adv-tone-blue">${symbol("dollarsign.circle.fill")} ${t(`${number(balance.coins)} 金币`, `${number(balance.coins)} gold`)}</strong></div>
       <div class="adv-segments adv-pool" aria-label="${t("祈愿池","Wish Pools")}">${[["equipment", t("装备池","Equipment Pool"), "shield.fill"], ["technique", t("技能池","Technique Pool"), "books.vertical.fill"]].map(([key, text, glyph]) => `<button type="button" data-adv-action="pool" data-id="${key}" aria-pressed="${key === pool}">${symbol(glyph)} ${text}</button>`).join("")}</div>
       <div class="adv-actions adv-wish-actions">${btn(t(`${label}单抽 · 1 星券`, `${label}: 1 draw · 1 ticket`), "draw", 1, {primary: true, icon: "gift.fill", disabled: balance.tickets < 1})}
       ${btn(t(`${label}十连 · 10 星券`, `${label}: 10 draws · 10 tickets`), "draw", 10, {icon: "sparkles", disabled: balance.tickets < 10})}${btn(t(`${label}百连 · 100 星券`, `${label}: 100 draws · 100 tickets`), "draw", 100, {icon: "square.grid.2x2.fill", disabled: balance.tickets < 100})}
       ${balance.coins >= 500 ? menu(t("金币商店", "Gold Shop"), [btn(t("500 金币 → 1 星券", "500 gold → 1 ticket"), "exchange", "tickets"), btn(t("500 金币 → 50 悟性", "500 gold → 50 insight"), "exchange", "insight"), btn(t("500 金币 → 50 星尘", "500 gold → 50 stardust"), "exchange", "stardust")]) : btn(t("金币商店", "Gold Shop"), "exchange", "", {icon: "cart.fill", disabled: true})}</div>
-      <div class="adv-actions adv-wish-totals"><strong class="adv-tone-orange">${symbol("ticket.fill")} ${t(`持有 ${number(balance.tickets)} 张`, `${number(balance.tickets)} tickets`)}</strong><strong class="adv-tone-blue">${symbol("dollarsign.circle.fill")} ${t(`${number(balance.coins)} 金币`, `${number(balance.coins)} gold`)}</strong><strong class="adv-tone-purple">${symbol("shield.fill")} ${t(`${label}池独立累计`, `Separate ${label.toLowerCase()} counter`)}</strong></div>
       ${pity(data)}</article>
-      <div class="adv-columns"><article class="adv-panel adv-drop-rules"><h3>${t("掉落说明", "Drop Rates")}</h3>${[7, 6, 5, 4, 3, 2, 1].map(item => `<div class="adv-drop ${rarityClass(item)}"><strong><i></i>${rarityName(item)}</strong><small>${rarityName(item)} ${label}</small><b>${rates[item]}</b></div>`).join("")}
-      <small>${pool === "equipment" ? t("装备池只产出装备；重复装备自动转化为星尘。","Equipment duplicates convert to stardust.") : t("技能池只产出技能；重复技能按品质自动转化为悟性。","Technique duplicates convert to insight based on rarity.")} ${t("五档保底分别独立累计。","All five guarantee tiers track draws separately.")}</small><small>${t("单抽、十连与百连结果均按品质从高到低排列。", "Single, 10-draw, and 100-draw results are sorted by rarity.")}</small></article>
-      <article class="adv-panel"><h3>${t("最近获得", "Recent Rewards")}</h3>${data.history.length ? data.history.map(eventRow).join("") : `<p class="adv-empty">${t("还没有抽取记录。", "No draw history yet.")}</p>`}</article></div>`;
+      <aside class="adv-operations"><article class="adv-panel adv-wish-history"><h3>${t("最近获得", "Recent Rewards")}</h3>${data.history.length ? data.history.map(eventRow).join("") : `<p class="adv-empty">${t("还没有抽取记录。", "No draw history yet.")}</p>`}</article>
+      <details class="adv-panel adv-rules adv-drop-rules"><summary>${t("掉落说明", "Drop Rates")}</summary><div>${[7, 6, 5, 4, 3, 2, 1].map(item => `<div class="adv-drop ${rarityClass(item)}"><strong><i></i>${rarityName(item)}</strong><b>${rates[item]}</b></div>`).join("")}
+      <small>${pool === "equipment" ? t("重复装备转化为星尘。","Equipment duplicates convert to stardust.") : t("重复技能按品质转化为悟性。","Technique duplicates convert to insight based on rarity.")} ${t("五档保底独立累计。","All five tiers track draws separately.")}</small><small>${t("抽取结果按品质从高到低排列。", "Results are sorted by rarity.")}</small></div></details></aside></div>`;
   }
 
   function achievementsPage(data) {
     return `<div class="adv-stats adv-achievement-stats">${stat(t("已解锁成就", "Unlocked Achievements"), `${data.achievements.filter(item => item.unlocked).length}/${data.achievements.length}`, "trophy.fill", "orange")}${stat(t("留下足迹的天数", "Days Saved"), number(data.savingDays), "calendar", "teal")}${stat(t("冒险胜利次数", "Adventure Wins"), number(data.defeated), "burst.fill", "green")}</div>
       <div class="adv-card-grid adv-achievement-grid">${data.achievements.map(item => `<article class="adv-panel adv-achievement adv-tone-${item.color} ${item.unlocked ? "" : "adv-locked"}">
-      ${iconTile(item.unlocked ? item.symbol : "lock.fill")}<h3>${h(item.unlocked ? localized(item,"title") : t("尚未解锁", "Locked"))}</h3><small>${h(localized(item,"detail"))}</small>
-      ${item.unlocked ? `<strong>${symbol("checkmark.seal.fill")} ${t("已获得", "Unlocked")}</strong>` : `<div class="adv-achievement-progress">${progress(localized(item,"detail"), item.current, item.total)}<small>${item.current}/${item.total}</small></div>`}</article>`).join("")}</div>`;
+      ${iconTile(item.unlocked ? item.symbol : "lock.fill")}<div class="adv-achievement-copy"><h3>${h(item.unlocked ? localized(item,"title") : t("尚未解锁", "Locked"))}</h3><small>${h(localized(item,"detail"))}</small>
+      ${item.unlocked ? `<strong>${symbol("checkmark.seal.fill")} ${t("已获得", "Unlocked")}</strong>` : `<div class="adv-achievement-progress">${progress(localized(item,"detail"), item.current, item.total)}<small>${item.current}/${item.total}</small></div>`}</div></article>`).join("")}</div>`;
   }
 
   function sceneKey(data, interactive) {
@@ -573,6 +600,11 @@
 
   const actionHandlers = {
     tab: id => setTab(id),
+    "jump-camp": () => {
+      const campArea = document.getElementById("adv-expedition-camp");
+      campArea?.scrollIntoView({block:"start"});
+      campArea?.querySelector(".adv-camp-links button")?.focus({preventScroll:true});
+    },
     actor: () => { selectedMonster = true; updateMap(true); },
     pool: id => { pool = id; window.renderAdventure(); },
     more: () => { filters[current].shown += 60; renderCollection(); },

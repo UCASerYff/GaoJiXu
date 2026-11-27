@@ -86,15 +86,23 @@
 
   const action = (name, title, id = "", primary = false, disabled = false) => '<button type="button" class="' + (primary ? "" : "ghost") +
     '" data-fixed="' + name + '" data-id="' + e(id) + '"' + (disabled ? " disabled" : "") + ">" + title + "</button>";
-  const panel = (title, body) => '<div class="card"><h2>' + title + "</h2>" + body + "</div>";
+  const panel = (title, body) => '<div class="card fixed-panel"><h2>' + title + "</h2>" + body + "</div>";
   const empty = text => '<p class="muted">' + text + "</p>";
   const row = (title, detail, controls = "") => '<div class="fixed-row"><div><strong>' + e(title) + '</strong><div class="muted">' +
     detail + '</div></div><div class="row">' + controls + "</div></div>";
-  const header = (title, subtitle, interfaceActions) => '<div class="workbench-header"><div><h1>' + title + "</h1><p>" +
-    subtitle + '</p></div><div class="row">' + interfaceActions + "</div></div>";
+  const header = (title, subtitle, interfaceActions) => '<div class="workbench-header fixed-header"><div><h1>' + title + "</h1>" +
+    (subtitle ? "<p>" + subtitle + "</p>" : "") + '</div><div class="row">' + interfaceActions + "</div></div>";
+  const statusTag = (label, tone = "quiet") => '<span class="fixed-status" data-tone="' + tone + '">' + e(label) + "</span>";
+  const listing = (title, body, options = "") => '<div class="card fixed-list"><div class="fixed-list-heading"><h2>' + title + "</h2>" + options +
+    '</div><div class="fixed-list-content">' + body + "</div></div>";
+  const item = (title, detail, value = "", commands = "") =>
+    '<div class="fixed-item"><div class="fixed-item-name"><strong>' + e(title) + '</strong><div class="muted">' + detail +
+    '</div></div><div class="fixed-item-value">' + value + '</div><div class="fixed-item-actions">' + commands + "</div></div>";
+  const itemMenu = buttons => '<details class="fixed-item-menu"><summary class="icon-button" aria-label="' + t("更多操作","More actions") +
+    '" title="' + t("更多操作","More actions") + '">' + icon("ellipsis") + '</summary><div class="menu-panel">' + buttons + "</div></details>";
   const pick = (name, title, options, selected, required = false) => '<label>' + title + '<select name="' + name + '"' +
     (required ? " required" : "") + ">" + options.map(([key, name]) => '<option value="' + e(key) + '"' + (selected === key ? " selected" : "") + ">" + e(name) + "</option>").join("") + "</select></label>";
-  const field = (name, title, val = "", attrs = "") => '<label>' + title + '<input name="' + name + '" value="' + e(val) + '" ' + attrs + "></label>";
+  const field = (name, title, val = "", attrs = "") => '<label data-field="' + name + '">' + title + '<input name="' + name + '" value="' + e(val) + '" ' + attrs + "></label>";
   const checkbox = (name, title, checked = false, attrs = "") => '<label class="check-row"><input type="checkbox" name="' + name +
     '"' + (checked ? " checked" : "") + " " + attrs + ">" + title + "</label>";
   const group = (title, body) => '<div class="form-section"><h3>' + title + '</h3><div class="fixed-fields">' + body + "</div></div>";
@@ -111,7 +119,7 @@
   const subById = id => subs().find(sub => sub.id === id);
   const accountChoices = currency => [["",t("请选择账户","Choose an account")], ...sameCurrency(currency)];
   const subsChoices = label => [["", label], ...subs().map(sub => [sub.id, sub.name])];
-  const displayCurrency = (amount, code) => e(code) + " " + money(amount, code);
+  const displayCurrency = (amount, code) => '<span class="fixed-money"><b>' + money(amount, code) + "</b><small>" + e(code) + "</small></span>";
   const cycleName = id => cycles().find(choice => choice[0] === id)?.[1] || id;
   const englishIncome = {"salary-income":"Salary","bonus-income":"Bonus","side-income":"Side income",
     "investment-income":"Investment income","gift-income":"Gift income","other-income":"Other income"};
@@ -160,31 +168,43 @@
     const arrived = receipts.filter(receipt => receipt.month === incomeMonth).sort((a,b) => b.confirmedAt - a.confirmedAt);
     const arrivedIDs = new Set(arrived.map(receipt => receipt.planID));
     const predicted = plans.filter(plan => plan.startMonth <= incomeMonth && plan.isEnabled && !arrivedIDs.has(plan.id));
-    const totals = (rows, message) => {
+    const totals = (rows, emptyText) => {
       const sums = new Map();
       rows.forEach(row => sums.set(row.currency, (sums.get(row.currency) || 0) + (Number(row.amount) || 0)));
-      return sums.size ? [...sums].map(([code, amount]) => '<div class="metric">' + displayCurrency(amount, code) + "</div>").join("") : empty(message);
+      return sums.size ? [...sums].map(([code, amount]) => '<div class="metric">' + displayCurrency(amount, code) + "</div>").join("") : empty(emptyText);
     };
     const plansHTML = plans.map(plan => {
-      const status = arrivedIDs.has(plan.id) ? t("该月已确认","Confirmed for this month") : !plan.isEnabled ? t("已停用","Disabled") : incomeMonth < plan.startMonth ? t("尚未开始","Not started") : incomeMonth > currentMonth() ? t("预计收入","Expected income") : "";
-      const [year,m] = incomeMonth.split("-").map(Number);
-      const date = Math.min(new Date(year,m,0).getDate(), Number(plan.dayOfMonth));
-      const firstMonth = e(plan.startMonth);
-      const predictedDate = e(incomeMonth + "-" + String(date).padStart(2,"0"));
-      const detail = t(`每月 ${plan.dayOfMonth} 日 · ${firstMonth} 起 · `, `Monthly on day ${plan.dayOfMonth} · from ${firstMonth} · `) +
-        e(incomeCategory(plan.category)) + (predicted.includes(plan) ? t(`<br>该月预计 ${predictedDate} 到账`, `<br>Expected on ${predictedDate}`) : "");
-      return row(plan.name, detail, '<strong>' + displayCurrency(plan.amount, plan.currency) + "</strong>" + (status ? '<span class="pill">' + status + "</span>" :
-        action("income-confirm",t("确认到账…","Confirm receipt…"),plan.id)) + action("income-edit",t("编辑计划","Edit plan"),plan.id) +
-        action("income-toggle",plan.isEnabled ? t("停用","Disable") : t("启用","Enable"),plan.id));
+      const confirmed = arrivedIDs.has(plan.id);
+      const canConfirm = !confirmed && plan.isEnabled && incomeMonth >= plan.startMonth && incomeMonth <= currentMonth();
+      const label = confirmed ? t("该月已确认","Confirmed for this month") : !plan.isEnabled ? t("已停用","Disabled") :
+        incomeMonth < plan.startMonth ? t("尚未开始","Not started") : t("预计收入","Expected income");
+      const [year, month] = incomeMonth.split("-").map(Number);
+      const day = Math.min(new Date(year, month, 0).getDate(), Number(plan.dayOfMonth));
+      const expected = incomeMonth + "-" + String(day).padStart(2, "0");
+      const detail = e(incomeCategory(plan.category)) + " · " + (predicted.includes(plan) ?
+        t("预计 ", "Expected ") + e(expected) : t("每月 " + plan.dayOfMonth + " 日", "Monthly on day " + plan.dayOfMonth)) +
+        " · " + e(plan.startMonth) + t(" 起", " onward");
+      return item(plan.name, detail, displayCurrency(plan.amount, plan.currency) +
+        statusTag(label, confirmed ? "positive" : predicted.includes(plan) ? "expected" : "quiet"),
+        (canConfirm ? action("income-confirm",t("确认到账","Confirm receipt"),plan.id,true) : "") +
+        itemMenu(action("income-edit",t("编辑计划","Edit plan"),plan.id) +
+          action("income-toggle",plan.isEnabled ? t("停用","Disable") : t("启用","Enable"),plan.id)));
     }).join("");
-    mount(root, header(t("固定收入","Fixed income"),t("按月查看预计收入。实际收到后，请选择收款账户并确认到账。","View expected income by month. After the funds arrive, select the receiving account and confirm."),action("income-edit",icon("plus") + t("新建收入计划","New income plan"),"",true)) +
-      '<div class="row fixed-month">' + action("income-prev",t("‹ 上个月","‹ Previous month")) + "<strong>" + e(incomeMonth) + "</strong>" + action("income-next",t("下个月 ›","Next month ›")) +
-      action("income-current",t("本月","This month")) + '</div><div class="fixed-totals">' +
-      panel(t("待确认的预计收入","Expected income awaiting confirmation"),totals(predicted,t("没有待确认收入","No income awaiting confirmation"))) + panel(t("本月归属的已确认收入","Confirmed income for this month"),totals(arrived,t("尚未确认到账","No receipts confirmed yet"))) + "</div>" +
-      ((state.recurring || []).some(rule => rule.kind === "income" && rule.isEnabled) ? t('<div class="banner">账本中另有自动入账的周期收入规则。请勿为同一笔收入重复设置。</div>',"<div class=\"banner\">The ledger also has automatic recurring income. Use one schedule per payment.</div>") : "") +
-      panel(t("收入计划","Income plans"), plansHTML || empty(t("还没有收入计划。可添加工资、补贴或其他按月收到的款项。","No income plans yet. Add a salary, allowance, or another monthly payment."))) +
-      panel(t("该月确认记录","Receipts confirmed for this month"), arrived.map(receipt => row(receipt.name, t("到账 ","Received ") + e(receipt.received?.slice(0,10)) + " · " + e(receipt.accountName) + " · " +
-        e(receipt.ledgerStatus ? message(receipt.ledgerStatus) : t("已确认","Confirmed")), '<strong>' + displayCurrency(receipt.amount, receipt.currency) + "</strong>")).join("") || empty(t("暂无记录","No records yet"))));
+    const monthPicker = '<div class="row fixed-month">' +
+      action("income-prev",t("‹ 上月","‹ Previous")) + "<strong>" + e(incomeMonth) + "</strong>" +
+      action("income-next",t("下月 ›","Next ›")) + action("income-current",t("本月","This month")) + "</div>";
+    mount(root, header(t("固定收入","Fixed income"),"",action("income-edit",icon("plus") + t("新建收入计划","New income plan"),"",true)) +
+      '<div class="card fixed-income-summary">' + monthPicker + '<div class="fixed-totals">' +
+      '<div data-tone="expected"><h2>' + t("预计收入","Expected income") + "</h2>" + totals(predicted,t("没有待确认收入","No income awaiting confirmation")) + "</div>" +
+      '<div data-tone="positive"><h2>' + t("已确认到账","Confirmed receipts") + "</h2>" + totals(arrived,t("尚未确认到账","No receipts confirmed yet")) + "</div></div></div>" +
+      ((state.recurring || []).some(rule => rule.kind === "income" && rule.isEnabled) ?
+        '<div class="banner">' + t("账本已有自动入账的周期收入规则。每笔收入只需一种计划。","The ledger also has automatic recurring income. Use one schedule per payment.") + "</div>" : "") +
+      listing(t("收入计划","Income plans"), plansHTML || empty(t("还没有收入计划。可添加工资、补贴或其他按月收到的款项。","No income plans yet. Add a salary, allowance, or another monthly payment."))) +
+      listing(t("本月确认记录","Receipts confirmed for this month"), arrived.map(receipt => item(receipt.name,
+        t("到账 ","Received ") + e(receipt.received?.slice(0,10)) + " · " + e(receipt.accountName),
+        displayCurrency(receipt.amount, receipt.currency) + statusTag(receipt.ledgerStatus ? message(receipt.ledgerStatus) :
+          t("已确认","Confirmed"), receipt.ledgerStatus === "已入账" ? "positive" : "quiet"))).join("") ||
+        empty(t("暂无记录","No records yet"))));
   }
   function editIncome(plan) {
     const codes = state.currencies.map(currency => [currency.id,t(currency.name,currencyNames.of(currency.id)) + " · " + currency.id]);
@@ -216,42 +236,62 @@
   }
   function renderExpenses(root, monthly) {
     const writable = monthly.status === "ready";
+    const bills = monthly.bills || [];
+    const active = subs().filter(sub => !sub.archived && !sub.cancelledAt).length;
+    const pendingCount = bills.filter(bill => bill.due <= monthly.today).length;
+    const paidCount = monthly.payments.filter(payment => !payment.skipped && payment.paidAt.startsWith(monthly.monthKey)).length;
+    const kpis = [["subscription",t("在用订阅","Active subscriptions"),active],["bills",t("到期待核实","Due for review"),pendingCount],
+      ["payments",t("本月已确认","Confirmed this month"),paidCount]];
+    const summary = '<div class="card fixed-kpis">' + kpis.map(([id,title,value]) =>
+      '<button type="button" data-fixed="expense-tab" data-id="' + id + '"><span>' + title + '</span><strong>' + value + "</strong></button>").join("") + "</div>";
+    const searchLabel = t("搜索订阅","Search subscriptions");
     const views = {
-      subscription: () => t('<div class="row fixed-filter"><input type="search" id="fixed-sub-search" aria-label="搜索订阅名称" placeholder="搜索订阅名称" value="',"<div class=\"row fixed-filter\"><input type=\"search\" id=\"fixed-sub-search\" aria-label=\"Search subscriptions\" placeholder=\"Search subscriptions\" value=\"") +
-        e(filter) + '">' + checkbox("archived",t("含归档","Include archived"),showArchivedSubs,'id="fixed-archive-subs"') + '</div><div id="fixed-subscriptions-list">' + subscriptionRows() + "</div>",
-      bills: () => empty(t("近一年待核实及未来 90 天账期。月卡可提前续费并填写实际覆盖期数。","Unverified bills from the past year and projected bills for the next 90 days. For prepaid plans, record how many periods the payment covered.")) +
-        paginated(monthly.bills || [], bill => row(bill.name, e(bill.due) + t(" · 预计 "," · Expected ") + displayCurrency(bill.price,bill.currency),
-          action("pay",t("核实本期","Verify bill"),bill.id,true,!writable)), t("没有待核实账期。","No bills to verify."), t("显示更多账期","Show more bills")),
-      payments: () => paginated(monthly.payments, payment => row(subById(payment.subscriptionID)?.name || t("未识别订阅","Unknown subscription"),
-        e(payment.paidAt) + " · " + (payment.skipped ? t("本期未扣","No charge") : displayCurrency(payment.amount,payment.currency)) +
-        t(" · 覆盖 "," · Covers ") + (payment.periods || 1) + t(" 期"," period(s)") + (payment.note ? " · " + e(payment.note) : ""), action("pay-edit",t("更正","Correct"),payment.id,false,!writable) +
-        action("payment-delete",t("撤销","Undo"),payment.id,false,!writable)), t("还没有已核实的支付。","No verified payments yet."), t("显示更多支付","Show more payments")),
-      events: () => '<div class="row">' + action("event-edit",t("新增到期事项","New deadline"),"",true,!writable) + "</div>" +
-        ((monthly.events || []).map(event => row(event.name, e(event.deadline.replace("T"," ")) + (event.doneAt ? t(" · 已完成"," · Completed") : t(" · 待办"," · Pending")) +
-          (event.note ? " · " + e(event.note) : ""), action("event-toggle",event.doneAt ? t("撤销完成","Mark incomplete") : t("标记完成","Mark complete"),event.id,false,!writable) +
-          action("event-edit",t("编辑","Edit"),event.id,false,!writable) + action("event-delete",t("删除","Delete"),event.id,false,!writable))).join("") || empty(t("没有到期事项。","No deadlines."))),
+      subscription: () => listing(t("订阅清单","Subscription list"), '<div id="fixed-subscriptions-list">' + subscriptionRows() + "</div>",
+        '<div class="row fixed-filter"><label class="fixed-search">' + icon("magnifyingglass") +
+        '<input type="search" id="fixed-sub-search" aria-label="' + searchLabel + '" placeholder="' + searchLabel + '" value="' + e(filter) + '"></label>' +
+        checkbox("archived",t("含归档","Include archived"),showArchivedSubs,'id="fixed-archive-subs"') + "</div>"),
+      bills: () => listing(t("账期清单","Billing schedule"),
+        '<p class="fixed-intro muted">' + t("近一年待核实及未来 90 天的账期。预计费用在核实后入账。","Includes unverified bills from the past year and upcoming bills for 90 days. Charges enter the ledger after verification.") + "</p>" +
+        paginated(bills, bill => item(bill.name, '<time datetime="' + e(bill.due) + '">' + e(bill.due) + "</time>",
+          displayCurrency(bill.price,bill.currency) + statusTag(bill.due <= monthly.today ? t("待核实","Unverified") : t("预计","Expected"),"expected"),
+          action("pay",t("核实本期","Verify bill"),bill.id,true,!writable)), t("没有待核实账期。","No bills to verify."), t("显示更多账期","Show more bills"))),
+      payments: () => listing(t("已核实支付","Verified payments"), paginated(monthly.payments, payment => item(
+        subById(payment.subscriptionID)?.name || t("未识别订阅","Unknown subscription"),
+        e(payment.paidAt) + t(" · 覆盖 "," · Covers ") + (payment.periods || 1) + t(" 期"," period(s)") + (payment.note ? " · " + e(payment.note) : ""),
+        payment.skipped ? statusTag(t("本期未扣","No charge")) : displayCurrency(payment.amount,payment.currency) + statusTag(t("已确认","Confirmed"),"positive"),
+        action("pay-edit",t("更正","Correct"),payment.id,false,!writable) + itemMenu(action("payment-delete",t("撤销","Undo"),payment.id,false,!writable))),
+        t("还没有已核实的支付。","No verified payments yet."), t("显示更多支付","Show more payments"))),
+      events: () => listing(t("事项清单","Deadline list"),
+        (monthly.events || []).map(event => item(event.name, e(event.deadline.replace("T"," ")) + (event.note ? " · " + e(event.note) : ""),
+          statusTag(event.doneAt ? t("已完成","Completed") : t("待办","Pending"),event.doneAt ? "positive" : "expected"),
+          action("event-toggle",event.doneAt ? t("撤销完成","Mark incomplete") : t("标记完成","Mark complete"),event.id,false,!writable) +
+          itemMenu(action("event-edit",t("编辑","Edit"),event.id,false,!writable) + action("event-delete",t("删除","Delete"),event.id,false,!writable)))).join("") ||
+        empty(t("没有到期事项。","No deadlines.")), action("event-edit",t("新增到期事项","New deadline"),"",true,!writable)),
       review: () => statistics(monthly, writable)
     };
-    mount(root, header(t("固定支出","Fixed expenses"),t("先安排账期，再核实实际支付。预计费用不会记入个人账本。","Schedule bills and verify the actual payments. Forecasts stay outside the ledger."),
-      action("monthly-settings",t("提醒设置","Reminder settings"),"",false,!writable) + action("subscription-edit",icon("plus") + t("新增订阅","New subscription"),"",true,!writable)) +
-      (writable ? "" : '<div class="banner">' + e(message(monthly.notice)) + "</div>") +
-      integrationWarning() +
-      t('<div class="segmented fixed-expense-tab" aria-label="内容">',"<div class=\"segmented fixed-expense-tab\" aria-label=\"Fixed expense sections\">") + expenseTabs().map(([id,title]) =>
-        '<button type="button" class="' + (id === expenseTab ? "active" : "") + '" data-fixed="expense-tab" data-id="' + id + '">' + title + "</button>").join("") +
+    mount(root, header(t("固定支出","Fixed expenses"),"",
+      action("monthly-settings",icon("bell") + t("提醒设置","Reminder settings"),"",false,!writable) +
+      action("subscription-edit",icon("plus") + t("新增订阅","New subscription"),"",true,!writable)) +
+      (writable ? "" : '<div class="banner">' + e(message(monthly.notice)) + "</div>") + integrationWarning() + summary +
+      '<div class="segmented fixed-expense-tab" aria-label="' + t("固定支出内容","Fixed expense sections") + '">' +
+      expenseTabs().map(([id,title]) => '<button type="button" class="' + (id === expenseTab ? "active" : "") +
+        '" aria-pressed="' + (id === expenseTab) + '" data-fixed="expense-tab" data-id="' + id + '">' + title + "</button>").join("") +
       '</div><div class="fixed-tab-body">' + views[expenseTab]() + "</div>");
   }
   function paginated(rows, build, emptyText, more) {
-    return (rows.slice(0,count).map(build).join("") || empty(emptyText)) + (rows.length > count ? action("more",more) : "");
+    return (rows.slice(0,count).map(build).join("") || empty(emptyText)) + (rows.length > count ? '<div class="fixed-more">' + action("more",more) + "</div>" : "");
   }
   function subscriptionRows() {
     const writable = state.monthly.status === "ready";
     const visible = subs().filter(sub => (showArchivedSubs || !sub.archived) && sub.name.toLowerCase().includes(filter.trim().toLowerCase()))
-      .sort((a,b) => a.name.localeCompare(b.name, "zh-CN"));
-    return visible.map(sub => row(sub.name, (sub.archived ? t("已归档","Archived") : sub.cancelledAt ? t("已取消","Cancelled") : t("进行中","Active")) + " · " + e(cycleName(sub.cycle)) +
-      " · " + displayCurrency(sub.price,sub.currency) + " · " + sub.planCount + t(" 段计划"," plan version(s)"),
+      .sort((a,b) => a.name.localeCompare(b.name, t("zh-CN","en")));
+    return visible.map(sub => item(sub.name, e(cycleName(sub.cycle)) + " · " + e(sub.category || t("未分类","Uncategorized")) +
+      " · " + sub.planCount + t(" 段计划"," plan version(s)"),
+      displayCurrency(sub.price,sub.currency) + statusTag(sub.archived ? t("已归档","Archived") : sub.cancelledAt ? t("已取消","Cancelled") : t("进行中","Active"),
+        sub.archived || sub.cancelledAt ? "quiet" : "positive"),
       (sub.nextRenewal ? action("renew",t("续费","Renew"),sub.id,true,!writable) : "") + action("subscription-edit",t("编辑","Edit"),sub.id,false,!writable) +
-      action("subscription-archive",sub.archived ? t("取消归档","Unarchive") : t("归档","Archive"),sub.id,false,!writable) +
-      action("subscription-delete",t("删除","Delete"),sub.id,false,!writable))).join("") || empty(t("没有符合条件的订阅。","No matching subscriptions."));
+      itemMenu(action("subscription-archive",sub.archived ? t("取消归档","Unarchive") : t("归档","Archive"),sub.id,false,!writable) +
+        action("subscription-delete",t("删除","Delete"),sub.id,false,!writable)))).join("") || empty(t("没有符合条件的订阅。","No matching subscriptions."));
   }
   function editSubscription(sub) {
     const now = state.monthly.today;
@@ -408,14 +448,24 @@
   function renderBenefits(root, monthly) {
     const writable = monthly.status === "ready";
     const visible = monthly.benefits.filter(benefit => showArchivedBenefits || !benefit.archived);
-    mount(root, header(t("权益打卡","Benefits"),t("记录日领或周领权益；实际领取请到服务平台完成。","Track daily or weekly benefits. Claim them on the service itself."),
-      checkbox("archived",t("含归档","Include archived"),showArchivedBenefits,'id="fixed-archive-benefits"') + action("benefit-edit",icon("plus") + t("新增权益","New benefit"),"",true,!writable)) +
+    const active = monthly.benefits.filter(benefit => !benefit.archived && benefit.periodKey);
+    const checked = active.filter(benefit => benefit.claimed).length;
+    const controls = checkbox("archived",t("含归档","Include archived"),showArchivedBenefits,'id="fixed-archive-benefits"');
+    mount(root, header(t("权益打卡","Benefits"),t("记录已在服务方领取的权益。","Track benefits claimed on their services."),
+      action("benefit-edit",icon("plus") + t("新增权益","New benefit"),"",true,!writable)) +
       (writable ? "" : '<div class="banner">' + e(message(monthly.notice)) + "</div>") +
-      (visible.map(benefit => row(benefit.name, (benefit.kind === "weekly" ? t("每周权益","Weekly benefit") : t("每日权益","Daily benefit")) + " · " +
-        e(subById(benefit.subscriptionID)?.name || t("独立权益","Standalone benefit")) + (benefit.archived ? t(" · 归档"," · Archived") : ""),
-        action("benefit-claim",benefit.claimed ? t("本期已记","Recorded this period") : t("标记已领取","Mark claimed"),benefit.id,true,!writable || benefit.claimed || !benefit.periodKey) +
-        action("benefit-history",t("历史 / 补记","History and backfill"),benefit.id) + action("benefit-edit",t("编辑","Edit"),benefit.id,false,!writable) + action("benefit-delete",t("删除","Delete"),benefit.id,false,!writable))).join("") ||
-        empty(t("暂无权益，可新建独立权益或关联订阅。","No benefits yet. Create a standalone benefit or link one to a subscription."))));
+      listing(t("本期权益","Current benefits"),
+        visible.map(benefit => item(benefit.name, (benefit.kind === "weekly" ? t("每周权益","Weekly benefit") : t("每日权益","Daily benefit")) + " · " +
+          e(subById(benefit.subscriptionID)?.name || t("独立权益","Standalone benefit")),
+          benefit.archived ? statusTag(t("已归档","Archived")) : benefit.claimed ? statusTag(t("本期已记","Recorded this period"),"positive") :
+            benefit.periodKey ? statusTag(t("待打卡","To record"),"expected") : statusTag(t("暂不可记录","Unavailable")),
+          (!benefit.claimed && benefit.periodKey && !benefit.archived ?
+              action("benefit-claim",t("标记已领取","Mark claimed"),benefit.id,true,!writable) : "") +
+          action("benefit-history",t("历史 / 补记","History and backfill"),benefit.id) +
+          itemMenu(action("benefit-edit",t("编辑","Edit"),benefit.id,false,!writable) + action("benefit-delete",t("删除","Delete"),benefit.id,false,!writable)))).join("") ||
+        empty(t("暂无权益，可新建独立权益或关联订阅。","No benefits yet. Create a standalone benefit or link one to a subscription.")),
+        '<div class="row fixed-list-tools"><span class="muted">' + (active.length ? checked + "/" + active.length + t(" 已记录"," recorded") : "") +
+        "</span>" + controls + "</div>"));
   }
   function editBenefit(benefit) {
     formEditor({
@@ -447,20 +497,28 @@
       } : null
     });
   }
-  function change(collection, operation, id, confirmation) {
-    if (confirmation && !confirm(confirmation)) return Promise.resolve();
-    return api("/api/monthly/change",{collection,operation,id,expectedRevision:state.monthly.revision});
+  async function change(collection, operation, id, confirmation) {
+    const revision = state.monthly.revision;
+    if (confirmation && !(await confirmAction(confirmation))) return;
+    return api("/api/monthly/change",{collection,operation,id,expectedRevision:revision});
   }
   function fixedClick(event) {
     const button = event.target.closest("[data-fixed]");
     if (!button || button.disabled) return;
+    const menu = button.closest(".fixed-item-menu");
+    if (menu) menu.open = false;
     const id = button.dataset.id;
     const monthly = state.monthly;
     const plan = state.fixedIncome.plans.find(plan => plan.id === id);
     const benefit = monthly.benefits.find(item => item.id === id);
     const actions = {
       reload:() => refresh(),
-      "create-monthly":() => confirm(t("仅适用于从未使用月供的用户。建立新的固定支出业务库？","Create a new fixed-finance library? Use this only if you have never used the monthly finance module.")) && api("/api/monthly/create",{}),
+      "create-monthly":async () => {
+        if (await confirmAction(
+          t("仅适用于从未使用月供的用户。","Use this only if you have never used the monthly finance module."),
+          {title:t("建立固定支出资料库","Create a fixed-finance library"),label:t("建立","Create"),destructive:false}
+        )) await api("/api/monthly/create",{});
+      },
       "income-prev":() => { incomeMonth = dateShift(incomeMonth,-1); render("fixed-income"); },
       "income-next":() => { incomeMonth = dateShift(incomeMonth,1); render("fixed-income"); },
       "income-current":() => { incomeMonth = currentMonth(); render("fixed-income"); },
@@ -507,11 +565,12 @@
   }
   function bindReconciliation(root) {
     for (const button of root.querySelectorAll("[data-reconcile],[data-reconcile-ignore]")) {
-      button.onclick = () => {
+      button.onclick = async () => {
         const missing = state.monthly.reconciliation.find(row => row.id === (button.dataset.reconcile || button.dataset.reconcileIgnore));
         if (button.dataset.reconcileIgnore) {
-          if (confirm(t("忽略这笔已确认支付的记账提醒？","Ignore the ledger reminder for this payment?"))) api("/api/monthly/reconcile",{
-            id:missing.id,ignore:true,expectedRevision:state.monthly.revision
+          const expectedRevision = state.monthly.revision;
+          if (await confirmAction(t("忽略这笔已确认支付的记账提醒？","Ignore the ledger reminder for this payment?"))) api("/api/monthly/reconcile",{
+            id:missing.id,ignore:true,expectedRevision
           }).catch(showError);
           return;
         }
