@@ -65,9 +65,13 @@ private extension GaoJiXuWidgetSnapshot {
     static var placeholder: GaoJiXuWidgetSnapshot {
         let calendar = Calendar.current
         let start = calendar.date(from: calendar.dateComponents([.year, .month], from: Date())) ?? Date()
-        let days = (1...(calendar.range(of: .day, in: .month, for: start)?.count ?? 30)).map { day in
-            Day(date: calendar.date(byAdding: .day, value: day - 1, to: start) ?? start, day: day,
-                expense: day == 2 ? 68 : 0, income: day == 8 ? 3200 : 0, saving: day == 11 ? 500 : 0)
+        let dayCount: Int = calendar.range(of: .day, in: .month, for: start)?.count ?? 30
+        let days = (1...dayCount).map { (day: Int) -> Day in
+            let date = calendar.date(byAdding: .day, value: day - 1, to: start) ?? start
+            let expense: Double = day == 2 ? 68 : 0
+            let income: Double = day == 8 ? 3200 : 0
+            let saving: Double = day == 11 ? 500 : 0
+            return Day(date: date, day: day, expense: expense, income: income, saving: saving)
         }
         let monthFormatter = DateFormatter()
         monthFormatter.locale = Locale(identifier: "zh_CN")
@@ -168,23 +172,30 @@ private struct FinanceCalendarWidgetView: View {
     }
 
     private func calendarGrid(_ snapshot: GaoJiXuWidgetSnapshot) -> some View {
-        let leading = snapshot.displayCalendar.component(.weekday, from: snapshot.days.first?.date ?? snapshot.monthStart) - 1
+        let firstDate = snapshot.days.first?.date ?? snapshot.monthStart
+        let leading = snapshot.displayCalendar.component(.weekday, from: firstDate) - 1
         let weeks = max(1, (leading + snapshot.days.count + 6) / 7)
         return GeometryReader { geometry in
-            let cellHeight = max(1, (geometry.size.height - 10 - CGFloat(weeks) * 2) / CGFloat(weeks))
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 2) {
-                ForEach(["日", "一", "二", "三", "四", "五", "六"], id: \.self) { weekday in
-                    Text(weekday).font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
-                        .frame(height: 10)
-                }
-                ForEach(0..<leading, id: \.self) { _ in Color.clear.frame(height: cellHeight) }
-                ForEach(snapshot.days) { day in
-                    dayCell(day, snapshot: snapshot)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .padding(.horizontal, 1)
-                        .frame(height: cellHeight)
-                        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 3))
-                }
+            let rowCount = CGFloat(weeks)
+            let gridHeight: CGFloat = geometry.size.height - 10 - rowCount * 2
+            let cellHeight: CGFloat = max(1, gridHeight / rowCount)
+            calendarGridContent(snapshot, leading: leading, cellHeight: cellHeight)
+        }
+    }
+
+    private func calendarGridContent(_ snapshot: GaoJiXuWidgetSnapshot, leading: Int, cellHeight: CGFloat) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 2) {
+            ForEach(["日", "一", "二", "三", "四", "五", "六"], id: \.self) { weekday in
+                Text(weekday).font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
+                    .frame(height: 10)
+            }
+            ForEach(0..<leading, id: \.self) { _ in Color.clear.frame(height: cellHeight) }
+            ForEach(snapshot.days) { day in
+                dayCell(day, snapshot: snapshot)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.horizontal, 1)
+                    .frame(height: cellHeight)
+                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 3))
             }
         }
     }
