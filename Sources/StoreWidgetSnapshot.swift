@@ -14,7 +14,8 @@ extension SavingsStore {
     }
 
     /// Canonical financial content excludes game progress, array ordering and widget preferences.
-    func financialFingerprint() throws -> String {
+    func financialFingerprint(accounts candidateAccounts: [LedgerAccount]? = nil,
+                              entries candidateEntries: [LedgerEntry]? = nil) throws -> String {
         struct Content: Encodable {
             let accounts: [LedgerAccount]
             let entries: [LedgerEntry]
@@ -23,8 +24,8 @@ extension SavingsStore {
             let budgets: [BudgetPlan]
             let recurring: [RecurringRule]
         }
-        let content = Content(accounts: accounts.sorted { $0.id < $1.id },
-                              entries: ledgerEntries.sorted { $0.id < $1.id },
+        let content = Content(accounts: (candidateAccounts ?? accounts).sorted { $0.id < $1.id },
+                              entries: (candidateEntries ?? ledgerEntries).sorted { $0.id < $1.id },
                               goals: goals.sorted { $0.id < $1.id },
                               records: records.sorted { $0.id < $1.id },
                               budgets: budgets.sorted { $0.id < $1.id },

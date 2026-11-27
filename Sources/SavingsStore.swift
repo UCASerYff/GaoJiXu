@@ -30,6 +30,9 @@ final class SavingsStore: ObservableObject {
     @Published var recurringRules: [RecurringRule] = []
     @Published var fixedIncomePlans: [FixedIncomePlan] = []
     @Published var fixedIncomeReceipts: [FixedIncomeReceipt] = []
+    @Published var csvReviewArchive: CSVReviewArchive?
+    var windowsCSVReview: CSVReviewForeignJSON?
+    var csvReviewBatches: [CSVReviewBatch] { csvReviewArchive?.batches ?? [] }
     @Published var adventure = AdventureState(
         level: 1, experience: 0, stardust: 0, tickets: 10, insight: 0,
         monsterIndex: 0, monsterHP: 100, defeatedMonsters: 0, pityCount: 0,
@@ -110,7 +113,8 @@ final class SavingsStore: ObservableObject {
     func snapshot() -> SavingsLibrary {
         .init(lastLedgerAccountID: lastLedgerAccountID, financialRevision: financialRevision, financialUpdatedAt: financialUpdatedAt, version: Self.currentSchemaVersion, goals: goals, records: records, adventure: adventure, equipment: equipment, techniques: techniques,
               rewardEvents: rewardEvents, drawHistory: drawHistory, accounts: accounts, ledgerEntries: ledgerEntries, budgets: budgets,
-              pets: pets, equippedPetIDs: equippedPetIDs, recurringRules: recurringRules, fixedIncomePlans: fixedIncomePlans, fixedIncomeReceipts: fixedIncomeReceipts)
+              pets: pets, equippedPetIDs: equippedPetIDs, recurringRules: recurringRules, fixedIncomePlans: fixedIncomePlans, fixedIncomeReceipts: fixedIncomeReceipts,
+              macCSVReview: csvReviewArchive, windowsCSVReview: windowsCSVReview)
     }
 
     func apply(_ library: SavingsLibrary) {
@@ -121,6 +125,8 @@ final class SavingsStore: ObservableObject {
         recurringRules = library.recurringRules ?? []
         fixedIncomePlans = library.fixedIncomePlans ?? []
         fixedIncomeReceipts = library.fixedIncomeReceipts ?? []
+        csvReviewArchive = library.macCSVReview
+        windowsCSVReview = library.windowsCSVReview
         adventure = library.adventure
         adventure.lastBattleMessage = adventure.lastBattleMessage.map(normalizeSkillWording)
         equipment = library.equipment.map {

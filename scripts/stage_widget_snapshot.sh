@@ -1,11 +1,11 @@
 #!/bin/zsh
 set -euo pipefail
 ROOT=${0:A:h:h}
-export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 STAGE_BUILD=$(mktemp -d /tmp/gaojixu-stage-widget-build.XXXXXX)
 trap 'rm -rf "$STAGE_BUILD"' EXIT
 SDK=$(xcrun --sdk macosx --show-sdk-path)
-SOURCES=(FixedIncomeModels FixedIncomeStore Models AccountingModels GameCatalog HeroStats SavingsStore StorePersistence StoreWidgetSnapshot StoreLedger StoreGoals StoreBattle StoreGameSystems MonthlyLedgerBridge WidgetSnapshot AppTheme)
+SOURCES=(FixedIncomeModels FixedIncomeStore Models AccountingModels GameCatalog HeroStats SavingsStore StorePersistence StoreWidgetSnapshot StoreLedger StoreGoals StoreBattle StoreGameSystems MonthlyLedgerBridge WidgetSnapshot AppTheme CSVReview)
 INPUTS=()
 for source in $SOURCES; do INPUTS+=("$ROOT/Sources/$source.swift"); done
 # UNIT_TEST disables app observers and WidgetKit. This command never opens the application.

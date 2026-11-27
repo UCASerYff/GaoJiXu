@@ -21,7 +21,7 @@ struct ContentView: View {
     @SceneStorage("gqns.page.Savings") private var selection: SavingsSection = .overview
     @State private var showingRecordEditor = false
     @State private var ledgerEditorSession: LedgerEditorSession?
-    @State private var csvImportContext: CSVImportContext?
+    @State private var showingCSVReview = false
     @AppStorage(GQNSLanguage.key) private var appLanguage = "system"
 
     var body: some View {
@@ -49,6 +49,13 @@ struct ContentView: View {
                         Button(action: presentNewLedgerEntry) { Label(tS("记录收支或转账", "Record income, expense or transfer"), systemImage: "square.and.pencil") }
                         Button { showingRecordEditor = true } label: { Label(tS("分配一笔积蓄", "Allocate savings"), systemImage: "target") }
                             .disabled(store.activeGoals.isEmpty)
+                        Divider()
+                        Button(action: presentCSVReview) {
+                            Label(tS("导入审核箱", "Import Review"), systemImage: "tray.and.arrow.down")
+                        }
+                        Button(action: exportLedgerCSV) {
+                            Label(tS("导出流水 CSV", "Export Transactions CSV"), systemImage: "square.and.arrow.up")
+                        }
                     } label: { Label(tS("更多记录", "More"), systemImage: "ellipsis.circle") }
                 }
             }
@@ -63,8 +70,8 @@ struct ContentView: View {
                 .id(session.id)
                 .environmentObject(store)
         }
-        .sheet(item: $csvImportContext) { context in
-            CSVImportPreviewView(context: context)
+        .sheet(isPresented: $showingCSVReview) {
+            CSVReviewInbox()
                 .environmentObject(store)
         }
         .alert(tS("搞积蓄", "Gao Savings"), isPresented: Binding(
@@ -77,6 +84,7 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuNewLedgerEntry)) { _ in presentNewLedgerEntry() }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuNewSavingsRecord)) { _ in
+            guard !showingCSVReview else { return }
             guard !store.activeGoals.isEmpty else {
                 store.notice = tS("还没有进行中的攒钱目标，请先在「攒钱目标」中创建一个目标。", "No active savings goal yet — create one in Goals first.")
                 return
@@ -88,7 +96,7 @@ struct ContentView: View {
             PendingAutoLedger.recordConfirmed(paymentID, store: store)
         }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuExportCSV)) { _ in exportLedgerCSV() }
-        .onReceive(NotificationCenter.default.publisher(for: .gaojixuImportCSV)) { _ in importLedgerCSV() }
+        .onReceive(NotificationCenter.default.publisher(for: .gaojixuImportCSV)) { _ in presentCSVReview() }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("GaoSeries.savings.game"))) { _ in selection = .adventure }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuSelectSection)) { notification in
             guard let rawValue = notification.userInfo?["section"] as? String,
@@ -122,9 +130,13 @@ struct ContentView: View {
     private func handleRoute(_ url: URL) {
         guard url.scheme == "gaojixu" else { return }
         switch url.host {
+        case "csv-review": presentCSVReview()
         case "ledger": selection = .ledger
         case "overview": selection = .overview
+        case "accounts": selection = .accounts
         case "budgets": selection = .budgets
+        case "goals": selection = .goals
+        case "adventure": selection = .adventure
         case "fixed-income": selection = .fixedIncome
         case "fixed-expenses", "today": selection = .fixedExpenses
         case "benefits": selection = .benefits
@@ -169,26 +181,9 @@ struct ContentView: View {
         return formatter.string(from: Date())
     }
 
-    private func importLedgerCSV() {
-        let panel = NSOpenPanel()
-        panel.title = tS("选择流水 CSV 文件", "Choose a Transactions CSV")
-        panel.allowedContentTypes = [.commaSeparatedText, .plainText]
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            let outcome = LedgerCSVImporter.parse(text)
-            guard !outcome.rows.isEmpty else {
-                store.notice = outcome.skippedLines > 0
-                    ? tS("CSV 中没有可识别的流水行（\(outcome.skippedLines) 行无法解析）。请确认是「导出流水 CSV」生成的格式。", "No recognizable rows in the CSV (\(outcome.skippedLines) lines could not be parsed). Make sure it was produced by “Export Transactions CSV”.")
-                    : tS("CSV 文件是空的。", "The CSV file is empty.")
-                return
-            }
-            let plan = LedgerCSVImporter.plan(rows: outcome.rows, accounts: store.accounts, existingEntries: store.ledgerEntries)
-            csvImportContext = CSVImportContext(fileName: url.lastPathComponent, plan: plan, parseSkipped: outcome.skippedLines)
-        } catch {
-            store.notice = tS("CSV 读取失败：\(error.localizedDescription)", "Could not read the CSV: \(error.localizedDescription)")
-        }
+    private func presentCSVReview() {
+        guard !store.loadFailed, ledgerEditorSession == nil, !showingRecordEditor else { return }
+        showingCSVReview = true
     }
 
     private func syncWidgetSnapshotCurrency() {
@@ -196,7 +191,7 @@ struct ContentView: View {
     }
 
     private func presentNewLedgerEntry() {
-        guard ledgerEditorSession == nil else { return }
+        guard !showingCSVReview, ledgerEditorSession == nil else { return }
         ledgerEditorSession = .init(entry: nil)
     }
 }
@@ -250,11 +245,15 @@ private func toolbarItemNoChrome<Content: View>(
     _ placement: ToolbarItemPlacement,
     @ViewBuilder content: @escaping () -> Content
 ) -> some ToolbarContent {
+    #if compiler(>=6.2)
     if #available(macOS 26.0, *) {
         ToolbarItem(placement: placement, content: content).sharedBackgroundVisibility(.hidden)
     } else {
         ToolbarItem(placement: placement, content: content)
     }
+    #else
+    ToolbarItem(placement: placement, content: content)
+    #endif
 }
 
 private struct ToolbarProminentStyle: ButtonStyle {

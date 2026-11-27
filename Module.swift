@@ -84,6 +84,9 @@ public struct SavingsSettingsView: View {
 @MainActor public enum SavingsModuleRuntime {
     public static func start() { SavingsRuntime.start(); MonthlyFinanceStore.shared.reload() }
     public static func flush() -> Bool { SavingsRuntime.store.flushSave() }
+    public static var isLibraryProtected: Bool { SavingsRuntime.store.loadFailed }
+    public static var hasUnsubmittedCSVReview: Bool { CSVReviewWindowState.hasDraft }
+    public static func localized(_ zh: String, _ en: String) -> String { tS(zh, en) }
     /// Only the migrated, activated receiver database is read; unavailable is never an empty payment list.
     public static func hasMonthlyReconciliationHistory() -> Bool {
         SavingsRuntime.store.ledgerEntries.contains { $0.id.hasPrefix("auto-monthly|") }

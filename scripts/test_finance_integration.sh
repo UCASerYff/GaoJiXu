@@ -3,9 +3,9 @@
 # Every executable/fixture is isolated. No application, real database or WidgetCenter is started.
 set -euo pipefail
 STAGE=${1:-all}
-case "$STAGE" in all|migration|monthly|income|tasks|cli) ;; *) echo 'Usage: test_finance_integration.sh [all|migration|monthly|income|tasks|cli]' >&2; exit 64 ;; esac
+case "$STAGE" in all|migration|monthly|income|csv|tasks|cli) ;; *) echo 'Usage: test_finance_integration.sh [all|migration|monthly|income|csv|tasks|cli]' >&2; exit 64 ;; esac
 ROOT=${0:A:h:h}
-export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 BUILD="$ROOT/build.noindex/finance-regressions.noindex"
 mkdir -p "$BUILD/cache"
 SDK=$(xcrun --sdk macosx --show-sdk-path)
@@ -20,17 +20,22 @@ if [[ "$STAGE" == all || "$STAGE" == monthly ]]; then
     xcrun swiftc $FLAGS -lsqlite3 -framework CryptoKit $SHARED "$ROOT/Tests/MonthlyFinanceRegression.swift" -o "$BUILD/MonthlyFinanceRegression"
     "$BUILD/MonthlyFinanceRegression"
 fi
-SOURCES=(FixedIncomeModels FixedIncomeStore Models AccountingModels GameCatalog HeroStats SavingsStore StorePersistence StoreWidgetSnapshot StoreLedger StoreGoals StoreBattle StoreGameSystems MonthlyLedgerBridge WidgetSnapshot AppTheme)
+SOURCES=(FixedIncomeModels FixedIncomeStore Models AccountingModels GameCatalog HeroStats SavingsStore StorePersistence StoreWidgetSnapshot StoreLedger StoreGoals StoreBattle StoreGameSystems MonthlyLedgerBridge WidgetSnapshot AppTheme CSVReview)
 INPUTS=()
 for source in $SOURCES; do INPUTS+=("$ROOT/Sources/$source.swift"); done
 if [[ "$STAGE" == all || "$STAGE" == income ]]; then
     xcrun swiftc $FLAGS -D UNIT_TEST -framework SwiftUI -framework AppKit -framework Combine -framework CoreText -framework CryptoKit $INPUTS "$ROOT/Tests/FixedIncomeRegression.swift" -o "$BUILD/FixedIncomeRegression"
     "$BUILD/FixedIncomeRegression"
 fi
+if [[ "$STAGE" == all || "$STAGE" == csv ]]; then
+    xcrun swiftc $FLAGS -D UNIT_TEST -framework SwiftUI -framework AppKit -framework Combine -framework CoreText -framework CryptoKit $INPUTS "$ROOT/Tests/CSVReviewRegression.swift" -o "$BUILD/CSVReviewRegression"
+    "$BUILD/CSVReviewRegression"
+fi
 if [[ "$STAGE" == all || "$STAGE" == cli ]]; then
     xcrun swiftc $FLAGS -lsqlite3 -framework CryptoKit $SHARED $IMPORT "$ROOT/Tools/IntegrateFinance.swift" -o "$ROOT/build.noindex/IntegrateFinance"
 fi
 if [[ "$STAGE" == all || "$STAGE" == tasks ]]; then
     xcrun swiftc $FLAGS "$ROOT/Host/AutoLedgerTasks.swift" "$ROOT/Tests/AutoLedgerTaskSafetyRegression.swift" -o "$BUILD/AutoLedgerTaskSafetyRegression"
+    "$BUILD/AutoLedgerTaskSafetyRegression"
 fi
 echo "Finance isolated stage passed: $STAGE"

@@ -63,24 +63,48 @@ extension SavingsStore {
 
     private func persistNow() -> Bool {
         do {
-            try FileManager.default.createDirectory(at: libraryDirectory, withIntermediateDirectories: true)
-            let fingerprint = try financialFingerprint()
-            let financialContentChanged = persistedFinancialFingerprint != nil && fingerprint != persistedFinancialFingerprint
-            var library = snapshot()
-            library.financialRevision = fingerprint
-            library.financialUpdatedAt = financialContentChanged ? snapshotNow() : financialUpdatedAt
-            let data = try encoder.encode(library), temporary = libraryURL.appendingPathExtension("tmp")
-            try data.write(to: temporary, options: .atomic)
-            if FileManager.default.fileExists(atPath: libraryURL.path) { _ = try FileManager.default.replaceItemAt(libraryURL, withItemAt: temporary) }
-            else { try FileManager.default.moveItem(at: temporary, to: libraryURL) }
-            // Only acknowledge the financial revision after its business library is durable.
-            financialRevision = fingerprint
-            financialUpdatedAt = library.financialUpdatedAt
-            persistedFinancialFingerprint = fingerprint
-            financialSourceSavedAt = (try? FileManager.default.attributesOfItem(atPath: libraryURL.path)[.modificationDate]) as? Date
-            if financialContentChanged { financesDirty = true; pendingWidgetSnapshot = nil }
+            try persistLibrary(snapshot(), fingerprint: financialFingerprint())
             return true
         } catch { notice = "数据保存失败：\(error.localizedDescription)"; return false }
+    }
+
+    private func persistLibrary(_ snapshot: SavingsLibrary, fingerprint: String) throws {
+        try FileManager.default.createDirectory(at: libraryDirectory, withIntermediateDirectories: true)
+        let financialContentChanged = persistedFinancialFingerprint != nil && fingerprint != persistedFinancialFingerprint
+        var library = snapshot
+        library.financialRevision = fingerprint
+        library.financialUpdatedAt = financialContentChanged ? snapshotNow() : financialUpdatedAt
+        let data = try encoder.encode(library), temporary = libraryURL.appendingPathExtension("tmp")
+        try data.write(to: temporary, options: .atomic)
+        if FileManager.default.fileExists(atPath: libraryURL.path) { _ = try FileManager.default.replaceItemAt(libraryURL, withItemAt: temporary) }
+        else { try FileManager.default.moveItem(at: temporary, to: libraryURL) }
+        financialRevision = fingerprint
+        financialUpdatedAt = library.financialUpdatedAt
+        persistedFinancialFingerprint = fingerprint
+        financialSourceSavedAt = (try? FileManager.default.attributesOfItem(atPath: libraryURL.path)[.modificationDate]) as? Date
+        if financialContentChanged { financesDirty = true; pendingWidgetSnapshot = nil }
+    }
+
+    /// Persist the review receipt and its ledger mutation together before publishing either.
+    func commitCSVReview(_ archive: CSVReviewArchive, accounts newAccounts: [LedgerAccount],
+                         entries newEntries: [LedgerEntry], lastAccountID: String?) throws {
+        guard !loadFailed, hasLoadedValidLibrary else { throw CSVReviewError.protected }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: libraryURL.path),
+              attributes[.type] as? FileAttributeType == .typeRegular else { throw CSVReviewError.protected }
+        var draft = snapshot()
+        draft.macCSVReview = archive
+        draft.accounts = newAccounts
+        draft.ledgerEntries = newEntries
+        draft.lastLedgerAccountID = lastAccountID
+        try persistLibrary(draft, fingerprint: financialFingerprint(accounts: newAccounts, entries: newEntries))
+        pendingSaveWorkItem?.cancel()
+        pendingSaveWorkItem = nil
+        saveIsDirty = false
+        if accounts != newAccounts { accounts = newAccounts }
+        if ledgerEntries != newEntries { ledgerEntries = newEntries }
+        lastLedgerAccountID = lastAccountID
+        csvReviewArchive = archive
+        refreshWidgetSnapshotIfNeeded()
     }
 
     func load() {
@@ -108,6 +132,7 @@ extension SavingsStore {
             let decoded = try decoder.decode(SavingsLibrary.self, from: Data(contentsOf: libraryURL))
             guard decoded.version <= Self.currentSchemaVersion else { throw SavingsStoreError.unsupportedVersion }
             try validateFixedIncomeLibrary(decoded)
+            try decoded.macCSVReview?.validate()
             apply(decoded)
             // Legacy libraries have no reliable financial modification time. Do not invent one.
             financialRevision = try financialFingerprint()

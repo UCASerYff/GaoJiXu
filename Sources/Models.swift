@@ -1062,6 +1062,8 @@ struct SavingsLibrary: Codable {
     var recurringRules: [RecurringRule]? = nil
     var fixedIncomePlans: [FixedIncomePlan]? = nil
     var fixedIncomeReceipts: [FixedIncomeReceipt]? = nil
+    var macCSVReview: CSVReviewArchive? = nil
+    var windowsCSVReview: CSVReviewForeignJSON? = nil
 }
 
 struct BattleOutcome: Identifiable {

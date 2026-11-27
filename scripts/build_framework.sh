@@ -1,13 +1,12 @@
 #!/bin/zsh
 set -euo pipefail
 ROOT=${0:A:h:h}
-XCODE=/Applications/Xcode.app
-if [[ ! -d "$XCODE/Contents/Developer" ]]; then
-    echo "error: 未找到 Xcode（$XCODE）。构建需要完整 Xcode 工具链（SwiftUI 宏插件只随 Xcode 分发），" >&2
+export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+if [[ ! -d "$DEVELOPER_DIR" ]]; then
+    echo "error: 未找到 Xcode 工具链（$DEVELOPER_DIR）。构建需要完整 Xcode（SwiftUI 宏插件随 Xcode 分发），" >&2
     echo "       请安装 Xcode 后重试；仅用 Command Line Tools 无法构建。" >&2
     exit 1
 fi
-export DEVELOPER_DIR="$XCODE/Contents/Developer"
 NAME=Savings
 SOURCE="$ROOT"
 [[ -d "$SOURCE/Sources" && -f "$SOURCE/Module.swift" ]] || { echo "Unknown module: $NAME" >&2; exit 1; }

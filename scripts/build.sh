@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 ROOT=${0:A:h:h}
-export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 BUILD="$ROOT/build.noindex"
 APP="$BUILD/搞积蓄.app"
 SIGNING_IDENTITY=${GAO_SIGNING_IDENTITY:-A15B2B2D22B018CBC842063C9A8A589946647524}

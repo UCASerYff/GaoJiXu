@@ -311,6 +311,11 @@ struct LedgerView: View {
                     }.pickerStyle(.segmented).frame(maxWidth: 380)
                     Spacer()
                     Text("共 \(entries.count) 笔").font(.caption).foregroundStyle(.secondary)
+                    Button {
+                        NotificationCenter.default.post(name: .gaojixuImportCSV, object: nil)
+                    } label: {
+                        Label(tS("导入审核箱", "Import Review"), systemImage: "tray.and.arrow.down")
+                    }
                     Button { showingRecurring = true } label: { Label("周期记账", systemImage: "repeat") }
                     Button { editorSession = .init(entry: nil) } label: { Label("记一笔账", systemImage: "plus") }.buttonStyle(.borderedProminent)
                 }
