@@ -1,0 +1,32 @@
+.widget-tile { container-type: inline-size; }
+.widget-title { border-bottom: 1px solid var(--line); padding-bottom: 5px; min-height: 36px; }
+.widget-title h2 { min-width: 0; }
+.widget-window-actions { display:flex; gap:3px; align-items:center; flex-shrink:0; }
+.widget-window-button { min-height:27px; padding:3px 6px; font-size:11px; }
+.widget-window-button[aria-pressed="true"] { color:var(--accent); border-color:var(--accent); }
+.widget-mode .widget-grid.widget-single { max-width: none; }
+.widget-mode .widget-tile { min-height: 0; }
+.widget-adventure-hp { display:block; width:100%; height:8px; margin:5px 0 0; accent-color:var(--accent); }
+#widget-adventure-stage { pointer-events:none; }
+.widget-value { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.widget-calendar .widget-day { font-family: Consolas, "Segoe UI", sans-serif; font-variant-numeric:tabular-nums; }
+.widget-calendar .widget-day > * { text-overflow:ellipsis; overflow:hidden; white-space:nowrap; }
+.widget-overflow-2 { display:none; }
+@container (max-width:240px) {
+  .widget-window-actions { gap:1px; }
+  .widget-title h2 { font-size:12px; }
+  .widget-value { font-size:22px; }
+  .widget-overflow-4, [data-compact-hide="true"] { display:none; }
+  .widget-overflow-2 { display:block; }
+}
+@media (max-height:340px) {
+  .widget-mode .widget-expenses .widget-overflow-4, .widget-mode .widget-benefits .widget-overflow-4,
+  .widget-mode [data-compact-hide="true"] { display:none; }
+  .widget-mode .widget-overflow-2 { display:block; }
+}
+@media (max-height:390px) {
+  .widget-mode .widget-calendar .widget-income { display:none; }
+  .widget-mode .widget-calendar .widget-day { min-height:26px; display:grid; grid-template-columns:auto 1fr; }
+  .widget-mode .widget-calendar .widget-day .widget-expense { text-align:right; }
+  .widget-mode .widget-calendar .widget-day .widget-saving { grid-column:1/-1; }
+}

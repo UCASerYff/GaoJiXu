@@ -1,6 +1,6 @@
 """Read models for the adventure pages and the observation panel."""
 
-from gaojixu import adventure, catalog, finance
+from gaojixu import adventure, adventure_english as english, catalog, finance
 from gaojixu.timeutil import read_cocoa
 
 
@@ -15,6 +15,7 @@ ATTRIBUTES = (
     ("fortune", "幸运", "star.circle.fill", "fortune"),
 )
 PERCENT_ATTRIBUTES = {"critical", "criticalDamage", "lifesteal", "damageReduction"}
+ATTRIBUTE_ENGLISH = {"physical": "Physical Damage", "magic": "Magic Damage", "true": "True Damage"}
 FLAT_EFFECTS = {"attack", "defense", "vitality", "speed", "physicalResistance", "magicResistance", "physicalDamage",
                 "magicDamage", "trueDamage", "shield", "fortune"}
 PERCENT_EFFECTS = {"critical", "criticalDamage", "lifesteal", "damageReduction", "bossDamage", "experience", "stardust"}
@@ -40,7 +41,9 @@ MONSTER_TRAITS = (
 def _skill(key, value):
     name, symbol, explanation = SKILLS[key]
     percent = max(1, catalog.swift_round(min(value, catalog.SKILL_CAP[key]) * 100))
-    return {"name": name, "symbol": symbol, "detail": explanation.format(percent)}
+    title, detail = english.SKILLS[key]
+    return {"name": name, "symbol": symbol, "detail": explanation.format(percent),
+            "english": {"name": title, "detail": detail.format(percent)}}
 
 
 def _attribute_rows(values, gear=False):
@@ -50,19 +53,22 @@ def _attribute_rows(values, gear=False):
         if key in PERCENT_ATTRIBUTES:
             prefix = "+" if gear and key == "criticalDamage" else ""
             value = f"{prefix}{int(value * 100)}%"
-        rows.append({"name": label, "value": value, "symbol": symbol})
+        rows.append({"name": label, "value": value, "symbol": symbol,
+                     "english": {"name": ATTRIBUTE_ENGLISH.get(key) or english.EFFECTS[key]}})
     return rows
 
 
 def gear_definition(item):
     return {"id": item.id, "name": item.name, "slot": item.slot, "rarity": item.rarity,
-            "setName": item.set_name, "flavor": item.flavor, "symbol": item.symbol, "power": item.base_power}
+            "setName": item.set_name, "flavor": item.flavor, "symbol": item.symbol, "power": item.base_power,
+            "english": english.equipment(item)}
 
 
 def technique_definition(item):
     return {"id": item.id, "name": item.name, "rarity": item.rarity, "school": item.school,
             "culture": item.culture, "description": item.description, "symbol": item.symbol,
-            "effect": item.effect, "effectLabel": catalog.EFFECT_TITLE[item.effect]}
+            "effect": item.effect, "effectLabel": catalog.EFFECT_TITLE[item.effect],
+            "english": english.technique(item)}
 
 
 def gear_card(store, item):
@@ -91,7 +97,9 @@ def technique_card(store, item, level=None):
     effect = item.per_level * scale
     amount = max(1, catalog.swift_round(effect if item.effect in FLAT_EFFECTS else effect * 100))
     bonus = f"{amount}%" if item.effect in PERCENT_EFFECTS else str(amount)
-    return {**technique_definition(item), "level": level, "power": adventure._technique_power(store, item, level),
+    definition = technique_definition(item)
+    definition["english"] = {**definition["english"], "effectDisplay": f"{english.EFFECTS[item.effect]} +{bonus}"}
+    return {**definition, "level": level, "power": adventure._technique_power(store, item, level),
             "upgradeCost": catalog.technique_upgrade_cost(item.rarity, level) if 0 < level < catalog.MAX_TECHNIQUE else 0,
             "effectDisplay": f"{catalog.EFFECT_TITLE[item.effect]} +{bonus}",
             "signature": _skill(item.signature_skill, item.signature_power * scale)}
@@ -109,7 +117,8 @@ def collection(store, kind):
 def _pet_card(store, pet):
     stars = adventure.pet_stars(store, pet.id)
     return {"id": pet.id, "name": pet.name, "role": pet.role, "flavor": pet.flavor, "sprite": pet.sprite,
-            "stars": stars, "power": pet.power(max(1, stars)), "stage": min(2, max(0, stars - 1))}
+            "stars": stars, "power": pet.power(max(1, stars)), "stage": min(2, max(0, stars - 1)),
+            "english": english.pet(pet)}
 
 
 def _achievements(store, goal_rows, gear, techniques, game):
@@ -132,9 +141,24 @@ def _achievements(store, goal_rows, gear, techniques, game):
         ("传说相伴", "获得一件传说或更高装备", sum(item["rarity"] >= 5 for item in gear), 1, "star.fill", "orange"),
         ("心法初成", "修炼 3 门不同技能", len(techniques), 3, "scroll.fill", "purple"),
     ]
+    titles = (
+        ("First Coin", "Record your first valid deposit."),
+        ("Small Savings Add Up", "Record 5 valid deposits."),
+        ("Long-term Saver", "Record 20 valid deposits."),
+        ("Seven-day Streak", "Record savings 7 days in a row."),
+        ("Halfway Light", f"Reach 50% of any goal. Current best: {best}%."),
+        ("Wish Fulfilled", "Complete your first savings goal."),
+        ("First Victory", "Defeat your first enemy."),
+        ("Battle-tested Saver", "Defeat 8 enemies."),
+        ("Growing Stronger", "Reach hero level 5."),
+        ("Rare Collector", "Obtain a rare or higher item."),
+        ("Legendary Companion", "Obtain a legendary or higher item."),
+        ("Technique Student", "Learn 3 different techniques."),
+    )
     return saving_days, [{"title": title, "detail": detail, "current": min(value, total), "total": total,
-                          "unlocked": value >= total, "symbol": symbol, "color": color}
-                         for title, detail, value, total, symbol, color in definitions]
+                          "unlocked": value >= total, "symbol": symbol, "color": color,
+                          "english": {"title": en_title, "detail": en_detail}}
+                         for (title, detail, value, total, symbol, color), (en_title, en_detail) in zip(definitions, titles)]
 
 
 def snapshot(store, goal_rows):
@@ -151,6 +175,9 @@ def snapshot(store, goal_rows):
     pets = [_pet_card(store, item) for item in catalog.PETS]
     saving_days, achievements = _achievements(store, goal_rows, owned_gear, owned_tech, game)
     affixes = [_skill(key, power) for key in catalog.COMBAT_SKILLS if (power := adventure.combat_skill_power(store, key)) > 0]
+    translated = dict(zip(("monster", "monsterChapter", "monsterTrait", "monsterTraitDetail"), english.MONSTERS[monster.sprite]))
+    message = game.get("lastBattleMessage") or ""
+    translated["message"] = english.message(str(message))
     return {
         "level": level, "experience": game.get("experience"), "experienceNeeded": adventure.experience_needed(level),
         "heroHP": min(stats["maxHP"], max(0, int(game.get("heroHP", stats["maxHP"]) or stats["maxHP"]))), "heroMaxHP": stats["maxHP"],
@@ -158,17 +185,21 @@ def snapshot(store, goal_rows):
         "monster": monster.name, "monsterChapter": monster.chapter, "monsterSymbol": monster.symbol, "monsterSprite": monster.sprite,
         "monsterTrait": monster.trait, "monsterTraitDetail": MONSTER_TRAITS[monster.sprite],
         "monsterHP": min(monster_hp, max(0, int(game.get("monsterHP") or 0))), "monsterMaxHP": monster_hp,
-        "monsterPower": adventure.monster_power(store), "stage": adventure.current_stage(store), "message": game.get("lastBattleMessage") or "",
+        "monsterPower": adventure.monster_power(store), "stage": adventure.current_stage(store), "message": message,
+        "english": translated,
         "defeated": int(game.get("defeatedMonsters") or 0), "attempts": int(game.get("battleAttempts") or 0),
         "attackCount": int(game.get("attackCount") or 0),
         "equipped": game.get("equippedItems") or {}, "equippedTechniques": adventure.equipped_ids(store),
-        "equippedPets": adventure.equipped_pet_ids(store), "latestPetHatch": getattr(store, "latest_pet_hatch", None),
+        "equippedPets": adventure.equipped_pet_ids(store), "latestPetHatch": english.hatch(getattr(store, "latest_pet_hatch", None)),
         "attributes": _attribute_rows(stats), "affixes": affixes,
         "pity": {pool: adventure._pity(store, pool) for pool in ("equipment", "technique")},
         "gear": owned_gear, "techniques": owned_tech, "pets": [pet for pet in pets if pet["stars"] > 0], "petCatalog": pets,
         "gearCount": len(catalog.EQUIPMENT), "techniqueCount": len(catalog.TECHNIQUES),
-        "slots": [{"id": key, "name": name, "symbol": symbol} for key, name, _, symbol in catalog.SLOTS],
+        "slots": [{"id": key, "name": name, "symbol": symbol, "english": {"name": english.SLOT_NAMES[key]}}
+                  for key, name, _, symbol in catalog.SLOTS],
         "effects": catalog.EFFECT_TITLE, "schools": sorted({item.school for item in catalog.TECHNIQUES}),
-        "history": (store.doc.get("drawHistory") or [])[:7], "events": (store.doc.get("rewardEvents") or [])[:6],
+        "effectsEnglish": english.EFFECTS, "schoolsEnglish": english.SCHOOLS,
+        "history": [english.event(row) for row in (store.doc.get("drawHistory") or [])[:7] if isinstance(row, dict)],
+        "events": [english.event(row) for row in (store.doc.get("rewardEvents") or [])[:6] if isinstance(row, dict)],
         "savingDays": saving_days, "achievements": achievements,
     }

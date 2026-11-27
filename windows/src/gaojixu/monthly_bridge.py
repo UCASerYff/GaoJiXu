@@ -12,6 +12,8 @@ CLEANUP_KEY = "__pendingCleanup"
 
 def _read_metadata(store, name):
     path = store.directory / name
+    if path.is_symlink():
+        raise AppError("月供对账设置无法读取，原文件已保留。", "protected")
     if not path.exists():
         return {}
     try:
@@ -81,7 +83,7 @@ def _account(store, account_id, currency):
 
 def confirm(store, payload):
     store.require_ready()
-    monthly_state = monthly._require(store.directory)
+    monthly_state = monthly._require(store.directory, payload.get("expectedRevision"))
     subscription = monthly._row(monthly_state, "subscriptions", payload.get("subscriptionID"))
     if not subscription:
         raise AppError("没有这项订阅。", "invalid")
@@ -114,7 +116,7 @@ def confirm(store, payload):
 
 def change_item(store, payload):
     store.require_ready()
-    state = monthly._require(store.directory)
+    state = monthly._require(store.directory, payload.get("expectedRevision"))
     collection, operation = payload.get("collection"), payload.get("operation")
     current = monthly._row(state, collection, payload.get("id"))
     effects = []
@@ -168,7 +170,7 @@ def _ledger_day(entry, store, view):
 
 def reconcile(store, payload):
     store.require_ready()
-    state = monthly._require(store.directory)
+    state = monthly._require(store.directory, payload.get("expectedRevision"))
     payment = monthly._row(state, "payments", payload.get("id"))
     if not payment or payment.get("skipped") or not payment.get("amount"):
         raise AppError("这笔已确认的支付已变化。", "conflict")

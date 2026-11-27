@@ -1,0 +1,192 @@
+import json
+from datetime import datetime, timezone
+import threading
+from types import SimpleNamespace
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+import pytest
+
+from gaojixu import monthly
+from gaojixu.desktop import open_target
+from gaojixu.desktop_widgets import DesktopWidgets, TYPES
+from gaojixu.errors import AppError
+from gaojixu.monthly_notices import MonthlyNotices
+from gaojixu.store import Store
+from gaojixu.web import dispatch, serve
+
+
+class TestWindows:
+    __test__ = False
+
+    def __init__(self):
+        self.windows = {}
+        self.pinned = {}
+        self.positions = {}
+        self.foreground = None
+
+    def discover(self, lease, _executable):
+        return self.windows.get(lease)
+
+    def belongs(self, hwnd, lease):
+        return self.windows.get(lease) == hwnd
+
+    def topmost(self, hwnd):
+        return self.pinned.get(hwnd, False)
+
+    def pin(self, hwnd, requested):
+        self.pinned[hwnd] = requested
+        return True
+
+    def placement(self, hwnd):
+        return self.positions[hwnd]
+
+    def restore(self, hwnd, rect):
+        self.positions[hwnd] = rect
+
+    def activate(self, hwnd):
+        self.foreground = hwnd
+
+    def close(self, hwnd):
+        lease = next(lease for lease, handle in self.windows.items() if handle == hwnd)
+        del self.windows[lease]
+
+
+def test_desktop_widget_pin_restore_duplicate_and_close(tmp_path):
+    browser = tmp_path / "synthetic-browser.exe"
+    windows = TestWindows()
+    launches = []
+    manager = DesktopWidgets("http://127.0.0.1:5000/", tmp_path / "desktop", browser, windows,
+                             launch=lambda options, **_kw: launches.append(options))
+    for handle, widget in enumerate(TYPES, 1):
+        assert manager.open(widget)["attaching"]
+        window = manager._active[widget]
+        windows.windows[window.lease] = handle
+        windows.positions[handle] = [40 * handle, 35 * handle, 500 + 40 * handle, 400 + 35 * handle]
+        assert not manager.request({"command": "status", "widget": widget, "lease": "unknown"}, lambda _: None)["currentAttached"]
+        assert manager.request({"command": "status", "widget": widget, "lease": window.lease}, lambda _: None)["currentAttached"]
+    assert len(launches) == 5
+    kinds = {kind: window.lease for kind, window in manager._active.items()}
+    for name in ("calendar", "expenses"):
+        request = {"command": "pin", "widget": name, "lease": kinds[name], "pinned": True}
+        assert manager.request(request, lambda _: None)["pinned"]
+    with pytest.raises(AppError):
+        manager.request({"command": "close", "widget": "calendar", "lease": "unknown"}, lambda _: None)
+    routes = []
+    manager.request({"command": "route", "widget": "expenses", "lease": kinds["expenses"]}, routes.append)
+    assert routes == ["fixed-expenses"]
+    assert manager.open("calendar")["open"] and windows.foreground == 1 and len(launches) == 5
+    manager.request({"command": "close", "widget": "expenses", "lease": kinds["expenses"]}, lambda _: None)
+    manager.close()
+    assert not windows.windows
+
+    restarted = DesktopWidgets(manager.url, manager.base, browser, windows, launch=lambda args, **_kw: launches.append(args))
+    restarted.restore()
+    assert list(restarted._active) == ["calendar"]
+    assert "--start-minimized" in launches[-1]
+    lease = restarted._active["calendar"].lease
+    windows.windows[lease] = 99
+    windows.positions[99] = [0, 0, 200, 200]
+    status = restarted.request({"command": "status", "widget": "calendar", "lease": lease}, lambda _: None)
+    assert status["windows"]["calendar"]["pinned"]
+    assert windows.positions[99] == [40, 35, 540, 435]
+    assert not restarted.request({"command": "pin", "widget": "calendar", "lease": lease, "pinned": False}, lambda _: None)["pinned"]
+    restarted.close()
+
+
+def test_desktop_layout_future_version_preserved(tmp_path):
+    layout = tmp_path / "layout.json"
+    original = '{"version": 70, "windows": {"calendar": {}}}'
+    layout.write_text(original, encoding="utf-8")
+    windows = TestWindows()
+    manager = DesktopWidgets("http://127.0.0.1:5000/", tmp_path, "chrome.exe", windows, launch=lambda *_a, **_kw: None)
+    manager.open("calendar")
+    lease = manager._active["calendar"].lease
+    windows.windows[lease] = 1
+    windows.positions[1] = [40, 40, 440, 440]
+    manager.request({"command": "pin", "widget": "calendar", "lease": lease, "pinned": True}, lambda _: None)
+    manager.close()
+    assert layout.read_text(encoding="utf-8") == original
+
+
+def test_desktop_api_auth_secondary_launch_and_notification(tmp_path, monkeypatch):
+    store = Store(tmp_path / "synthetic-data")
+    server = serve(store, open_browser=False)
+    windows = TestWindows()
+    launches = []
+    manager = DesktopWidgets(server.url, tmp_path / "widgets", "chrome.exe", windows,
+                             launch=lambda args, **_kw: launches.append(args))
+    server.desktop_widgets = manager
+    notifications = []
+
+    class Tray:
+        def test_notification(self, title, body):
+            notifications.append((title, body))
+            return True
+
+    server.desktop_tray = Tray()
+    monkeypatch.setattr("gaojixu.desktop.open_window", lambda url: pytest.fail("Unexpected unmanaged window " + url))
+
+    def post(path, data, token):
+        request = Request(
+            server.url + path, data=json.dumps(data).encode(),
+            headers={"Content-Type": "application/json", "X-Gao-Token": token},
+        )
+        with urlopen(request, timeout=2) as response:
+            return json.load(response)
+
+    try:
+        with pytest.raises(HTTPError) as error:
+            post("api/desktop/widgets", {"command": "open", "widget": "calendar"}, "bogus")
+        assert error.value.code == 403
+        open_target(server.url, "?widget=benefits", existing=True)
+        assert len(launches) == 1 and "widget=benefits" in launches[0][-1]
+        assert {"submitted": True} == post("api/desktop/notification-test", {"language": "en"}, server.token)["result"]
+        assert notifications[0][0] == "Gao Savings · Notification test"
+        with pytest.raises(HTTPError) as error:
+            post("api/desktop/notification-test", {"language": "en"}, server.token)
+        assert error.value.code == 400
+        server.desktop_tray = None
+        for language, expected in [("en", "Windows did not accept the notification."), ("zh", "Windows 未接受通知。")]:
+            server.last_test_notice = float("-inf")
+            with pytest.raises(HTTPError) as failure:
+                post("api/desktop/notification-test", {"language": language}, server.token)
+            assert json.load(failure.value)["error"] == expected
+    finally:
+        manager.close()
+        server.shutdown_requested.set()
+        server.shutdown()
+        server.server_close()
+
+
+def test_widget_stale_business_timezone_blocks_claim(tmp_path):
+    now = datetime(2026, 11, 27, 10, tzinfo=timezone.utc)
+    store = Store(tmp_path, tz=timezone.utc, now=lambda: now)
+    store.create_library()
+    store.create_monthly()
+    monthly.update_preferences(tmp_path, {"timezone": "Asia/Shanghai"}, store.now)
+    monthly.save_subscription(tmp_path, {"name": "临时权益", "price": 25, "benefit": "daily"}, store.now)
+    benefit, = store.snapshot()["monthly"]["benefits"]
+    with pytest.raises(AppError):
+        dispatch(store, "/api/monthly/claim", {
+            "id": benefit["id"], "periodKey": benefit["periodKey"], "expectedTimezone": "UTC",
+        })
+    assert dispatch(store, "/api/monthly/claim", {
+        "id": benefit["id"], "periodKey": benefit["periodKey"], "expectedTimezone": "Asia/Shanghai",
+    })["claimed"]
+
+
+def test_unsubmitted_reminder_is_resampled_after_privacy_change(tmp_path):
+    now = datetime(2026, 11, 27, 10, tzinfo=timezone.utc)
+    store = Store(tmp_path, tz=timezone.utc, now=lambda: now)
+    store.create_library()
+    store.create_monthly()
+    monthly.update_preferences(tmp_path, {"notifications": True, "privacy": False}, store.now)
+    monthly.save_event(tmp_path, {"name": "Synthetic private data", "deadline": "2026-11-27T09:30"}, store.now)
+    reminders = MonthlyNotices(SimpleNamespace(store=store, lock=threading.Lock()))
+    assert reminders.next_notice()[1] == "Synthetic private data"
+    monthly.update_preferences(tmp_path, {"privacy": True}, store.now)
+    _, message, submitted = reminders.next_notice()
+    assert message == "有到期事项待处理。"
+    submitted()
+    assert reminders.next_notice() is None

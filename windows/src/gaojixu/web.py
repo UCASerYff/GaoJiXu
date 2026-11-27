@@ -12,7 +12,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from gaojixu import adventure, adventure_view, csvutil, finance, finance_views, monthly, monthly_bridge
+from gaojixu.desktop import open_window
 from gaojixu.errors import AppError
+from gaojixu.monthly_integration import MonthlyIntegration
 from gaojixu.resources import asset_dir, mac_asset_dir
 from gaojixu.store import Store
 from gaojixu.version import VERSION_LABEL
@@ -26,13 +28,24 @@ class SavingsServer(ThreadingHTTPServer):
         self.token = secrets.token_urlsafe(24)
         self.instance_key = instance_key
         self.lock = threading.Lock()
+        self.desktop_widgets = None
+        self.desktop_tray = None
+        self.last_test_notice = float("-inf")
         self.shutdown_requested = threading.Event()
+        self.monthly_integration = MonthlyIntegration(store, self.lock, self.shutdown_requested)
         super().__init__((host, port), Handler)
 
     @property
     def url(self) -> str:
         host, port = self.server_address[:2]
         return f"http://{host}:{port}/"
+
+    def server_close(self) -> None:
+        self.shutdown_requested.set()
+        super().server_close()
+        monthly_thread = self.monthly_integration.thread
+        if monthly_thread.is_alive():
+            monthly_thread.join(timeout=2)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -53,7 +66,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             with self.server.lock:
                 result = self.server.store.snapshot()
+                result["monthlyIntegration"] = self.server.monthly_integration.state
             self._json(result)
+            return
+        if parsed.path == "/api/monthly/integration":
+            if self._authorized():
+                self._json(self.server.monthly_integration.state)
             return
         if parsed.path == "/api/adventure/state":
             if not self._authorized():
@@ -139,11 +157,40 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             payload = self._body()
+            if parsed.path == "/api/desktop/widgets":
+                manager = self.server.desktop_widgets
+                if manager is not None:
+                    result = manager.request(payload, lambda route: open_window(self.server.url + "#" + route))
+                elif payload.get("command") == "status":
+                    result = {"available": False, "windows": {}}
+                else:
+                    raise AppError("桌面小组件当前不可用。", "desktop-widget")
+                self._json({"ok": True, "result": result})
+                return
+            if parsed.path == "/api/desktop/notification-test":
+                tray = self.server.desktop_tray
+                english = payload.get("language") == "en"
+                now = time.monotonic()
+                with self.server.lock:
+                    if now - self.server.last_test_notice < 10:
+                        raise AppError("Wait a moment before testing again." if english else "请稍候再测试通知。", "desktop-notice")
+                    self.server.last_test_notice = now
+                title, body = (
+                    ("Gao Savings · Notification test", "Fixed expenses and due dates appear here.")
+                    if english else ("搞积蓄 · 通知测试", "固定支出与到期事项提醒会显示在这里。")
+                )
+                if tray is None or not tray.test_notification(title, body):
+                    raise AppError("Windows did not accept the notification." if english else "Windows 未接受通知。", "desktop-notice")
+                self._json({"ok": True, "result": {"submitted": True}})
+                return
             with self.server.lock:
                 if self.server.store.status == "ready":
                     self.server.store.notice = ""
                 result = dispatch(self.server.store, parsed.path, payload)
                 snapshot = self.server.store.snapshot()
+                snapshot["monthlyIntegration"] = self.server.monthly_integration.state
+                if parsed.path.startswith("/api/monthly/") or parsed.path == "/api/library/create":
+                    self.server.monthly_integration.notify()
             self._json({"ok": True, "result": result, "state": snapshot})
         except AppError as exc:
             self._json({"ok": False, "error": exc.message, "code": exc.code}, 400)
@@ -270,7 +317,10 @@ def dispatch(store: Store, path: str, payload: dict):
         return monthly.save_benefit(store.directory, payload, store.now)
     if path == "/api/monthly/claim":
         store.require_ready()
-        return monthly.claim_benefit(store.directory, payload["id"], store.now, payload.get("date"), payload.get("periodKey"))
+        return monthly.claim_benefit(
+            store.directory, payload["id"], store.now, payload.get("date"),
+            payload.get("periodKey"), payload.get("expectedTimezone"),
+        )
     if path == "/api/monthly/change":
         return monthly_bridge.change_item(store, payload)
     if path == "/api/monthly/event":
@@ -358,6 +408,7 @@ def _battle_loop(server: SavingsServer) -> None:
 
 def serve(store: Store, port: int = 0, open_browser: bool = True, instance_key: str = "") -> SavingsServer:
     server = SavingsServer(store, port=port, instance_key=instance_key)
+    server.monthly_integration.thread.start()
     thread = threading.Thread(target=server.serve_forever, name="gaojixu-http", daemon=True)
     thread.start()
     battle = threading.Thread(target=_battle_loop, args=(server,), name="gaojixu-battle", daemon=True)

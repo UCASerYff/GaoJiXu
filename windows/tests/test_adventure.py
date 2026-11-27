@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import random
+import re
 
 import pytest
 
@@ -91,3 +92,23 @@ def test_goal_completion_changes_tickets_and_live_achievements(store):
     assert updated["adventure"]["savingDays"] == 1
     unlocked = {item["title"] for item in updated["adventure"]["achievements"] if item["unlocked"]}
     assert {"第一枚硬币", "半程灯火", "愿望落地"} <= unlocked
+
+
+def test_english_adventure_catalog_and_rewards_do_not_rewrite_localized_save(store):
+    chinese = re.compile(r"[\u4e00-\u9fff]")
+    data_file = store.directory / "library.json"
+    original = data_file.read_bytes()
+    for kind in ("equipment", "technique"):
+        for row in adventure_view.collection(store, kind):
+            assert row["english"]["name"] and all(not chinese.search(display) for display in row["english"].values())
+    game = store.snapshot()["adventure"]
+    assert game["english"]["monster"] == "Coin Slime"
+    assert game["gear"][0]["english"]["name"] == "Savings Wooden Sword"
+    assert game["techniques"][0]["english"]["name"] == "Steady Heart"
+    assert game["attributes"][0]["english"]["name"] == "Attack"
+    assert game["events"][0]["english"]["title"] == "Adventure Begins"
+    assert data_file.read_bytes() == original
+    for pool in ("equipment", "technique"):
+        reveals = action(store, "draw", count=10, pool=pool)["reveals"]
+        assert all(not chinese.search(row["english"]["title"] + row["english"]["detail"]) for row in reveals)
+    assert all("english" not in row for row in store.doc["drawHistory"])

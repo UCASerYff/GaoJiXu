@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import locale
 from datetime import timedelta
 
 from gaojixu import monthly
@@ -25,15 +26,19 @@ class MonthlyNotices:
             zone = monthly.business_zone(state, store.tz)
             now = current.astimezone(zone)
             earliest = now - timedelta(hours=12)
+            language = store.settings.get("language")
+            if language == "system":
+                language = locale.getlocale()[0] or "zh"
+            english = language == "en" or str(language).lower().startswith("en_")
             self.delivered = {key: date for key, date in self.delivered.items() if date >= earliest}
-            for due, key, text in due_notices(state, now, zone, earliest):
+            for due, key, text in due_notices(state, now, zone, earliest, english=english):
                 if key not in self.delivered:
-                    self.delivered[key] = due
-                    return "搞积蓄 · 固定支出与事项", text
+                    title = "Gao Savings · Fixed expenses and deadlines" if english else "搞积蓄 · 固定支出与事项"
+                    return title, text, lambda: self.delivered.__setitem__(key, due)
         return None
 
 
-def due_notices(state, now, zone, earliest):
+def due_notices(state, now, zone, earliest, *, english=False):
     prefs = state.get("preferences", {})
     if not prefs.get("notifications"):
         return []
@@ -60,13 +65,17 @@ def due_notices(state, now, zone, earliest):
                 bill_date = parse_instant(bill["due"], zone)
                 notice_at = (bill_date - timedelta(days=day_count)).replace(hour=hour)
                 add(notice_at, f"bill|{bill['id']}|{day_count}",
-                    f"{subscription['name']} · {bill['currency']} {bill['price']}", "有固定支出待核对。")
+                    f"{subscription['name']} · {bill['currency']} {bill['price']}",
+                    "A fixed expense is due for review." if english else "有固定支出待核对。")
         trial = read_cocoa(subscription.get("cancelDeadline") or subscription.get("trialEnd"), zone)
         if not subscription.get("trialResolved") and trial:
             add(trial - timedelta(days=1), f"trial|{subscription['id']}|{trial.date()}",
-                f"{subscription['name']} 的试用即将到期，请在平台核对。", "试用即将到期。")
+                f"The trial for {subscription['name']} is ending. Check with the service." if english
+                else f"{subscription['name']} 的试用即将到期，请在平台核对。",
+                "A trial is ending soon." if english else "试用即将到期。")
     for event in state.get("events", []):
         deadline = read_cocoa(event.get("deadline"), zone)
         if deadline and not event.get("doneAt"):
-            add(deadline, f"event|{event['id']}|{deadline.isoformat()}", event["name"], "有到期事项待处理。")
+            add(deadline, f"event|{event['id']}|{deadline.isoformat()}", event["name"],
+                "A deadline needs attention." if english else "有到期事项待处理。")
     return sorted(result)

@@ -74,7 +74,7 @@ function icon(name) {
 async function get(path) {
   const response = await fetch(path, {headers});
   const result = await response.json();
-  if (!response.ok || result.ok === false) throw new Error(result.error || t("没有完成", "Could not complete the request"));
+  if (!response.ok || result.ok === false) throw requestError(path, result.error);
   return result;
 }
 async function api(path, body) {
@@ -83,7 +83,7 @@ async function api(path, body) {
   try {
     const response = await fetch(path, {method:"POST", headers, body:JSON.stringify(body || {})});
     const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error(data.error || t("没有完成", "Could not complete the request"));
+    if (!response.ok || !data.ok) throw requestError(path, data.error);
     if (data.state) {
       state = data.state;
       render();
@@ -92,6 +92,20 @@ async function api(path, body) {
   } finally {
     viewRevision++;
     pendingMutation--;
+  }
+}
+function requestError(path, text) {
+  const description = text || t("没有完成", "Could not complete the request");
+  return new Error(window.GaoFixed?.localError(path, description) ?? description);
+}
+async function refreshIfMonthlyChanged() {
+  const generation = state?.monthlyIntegration?.generation;
+  const revision = viewRevision;
+  const active = route;
+  const status = await get("/api/monthly/integration");
+  if (revision === viewRevision && route === active && status.generation !== generation &&
+      !document.getElementById("editor").open && document.activeElement?.id !== "fixed-sub-search") {
+    await refresh();
   }
 }
 async function refresh(background = false) {
@@ -113,7 +127,8 @@ async function refreshGame(observation) {
   if (observation?.isConnected) {
     window.renderAdventureObservation?.(observation, state.adventure);
     const description = observation.nextElementSibling;
-    description?.querySelector("strong")?.replaceChildren(t("等级 ", "Level ") + state.adventure.level + " · " + state.adventure.monster);
+    const monster = t(state.adventure.monster, state.adventure.english?.monster);
+    description?.querySelector("strong")?.replaceChildren(t("等级 ", "Level ") + state.adventure.level + " · " + monster);
     description?.querySelector("small")?.replaceChildren(t(
       "金币 " + state.summary.coins + " · 星券 " + state.summary.tickets,
       state.summary.coins + " coins · " + state.summary.tickets + " tickets"
@@ -140,7 +155,7 @@ function render() {
   if (/^#[\dA-Fa-f]{6}$/.test(tint)) root.style.setProperty("--user-tint", tint);
   else root.style.removeProperty("--user-tint");
   const appName = t("搞积蓄", "Gao Savings");
-  document.title = appName + " V" + version.split("+")[0];
+  document.title = window.GaoWidgets?.windowTitle(appName) || appName + " V" + version.split("+")[0];
   document.getElementById("brand-name").textContent = appName;
   document.getElementById("brand-tagline").textContent = t("我的财务工作台", "My finance workspace");
   document.getElementById("workspaces").innerHTML = workspaces.map(item => navButton(item[4][0], t(item[1], item[2]), item === workspace && route !== "widgets", item[3])).join("");
@@ -156,7 +171,8 @@ function render() {
     banner.innerHTML = ready ? escapeHTML(state.notice) :
       "<strong>" + (state.status === "missing" ? t("还没有资料库", "No library yet") : t("资料库只读保护", "Library protected")) + "</strong>" +
       (state.notice ? "<p>" + escapeHTML(state.notice) + "</p>" : "") +
-      (state.status === "missing" && !gallery ? '<p><button data-workbench="create">' + t("创建我的资料库", "Create my library") + "</button></p>" : "");
+      (state.status === "missing" && !gallery ? '<p><button data-workbench="create">' + t("创建我的资料库", "Create my library") + "</button></p>" : "") +
+      (gallery ? '<p><a href="/" target="_blank" rel="noopener">' + t("打开搞积蓄", "Open Gao Savings") + "</a></p>" : "");
   }
   for (const section of document.querySelectorAll("#workbench > section")) section.hidden = !ready || section.id !== route;
   if (!ready) return;
@@ -326,17 +342,25 @@ document.addEventListener("DOMContentLoaded", () => {
     banner.hidden = false;
   });
   if (gallery) document.getElementById("toolbar").hidden = true;
+  setInterval(() => {
+    if (!document.hidden && state?.status === "ready" && !pendingMutation && !liveRefresh &&
+        (fixedRoutes.some(item => item[0] === route) || route === "overview" || route === "ledger")) {
+      refreshIfMonthlyChanged().catch(() => {});
+    }
+  }, 3000);
   let ticks = 0;
   setInterval(async () => {
-    if (document.hidden || !state || state.status !== "ready" || pendingMutation || settingsFocus || liveRefresh) return;
+    if (document.hidden || pendingMutation || settingsFocus || liveRefresh || (route !== "widgets" && state?.status !== "ready")) return;
     const observation = route === "overview" ? document.querySelector("[data-adventure-observation]") : null;
     if (!(route === "adventure" || observation || (route === "widgets" && ++ticks % 3 === 0))) return;
     liveRefresh = true;
     try {
       if (route === "widgets") await refresh(true);
       else await refreshGame(observation);
+      if (route === "widgets") window.GaoWidgets?.connection(true);
     } catch {
       // Keep the most recent scene until the local service responds.
+      if (route === "widgets") window.GaoWidgets?.connection(false);
     } finally {
       liveRefresh = false;
     }

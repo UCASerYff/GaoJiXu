@@ -633,7 +633,8 @@ def draw(store, count: int, pool: str) -> dict:
         _ = moment
     store.doc["drawHistory"] = (entries + history)[:catalog.DRAW_CAP]
     store.save_game()
-    return {"reveals": reveals, "tickets": adventure["tickets"]}
+    from gaojixu import adventure_english
+    return {"reveals": [adventure_english.event(row) for row in reveals], "tickets": adventure["tickets"]}
 
 
 def exchange_ticket(store) -> dict:
@@ -898,7 +899,8 @@ def hatch_pet(store) -> dict:
     store.latest_pet_hatch = {"petID": definition.id, "name": definition.name, "stars": pet_stars(store, definition.id), "result": result}
     add_event(store, "宠物蛋孵化", f"孵化出“{definition.name}”：{result}。", "pawprint.fill")
     store.save_game()
-    return store.latest_pet_hatch
+    from gaojixu import adventure_english
+    return adventure_english.hatch(store.latest_pet_hatch)
 
 
 def equip_pet(store, pet_id: str) -> None:

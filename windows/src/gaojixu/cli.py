@@ -6,8 +6,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from gaojixu.desktop import RunningInstance, WIDGETS, open_window, target_for
+from gaojixu.desktop import RunningInstance, WIDGETS, open_target, open_window, start_widgets, target_for
 from gaojixu.errors import AppError
+from gaojixu.monthly_signal import signal as signal_monthly_change
 from gaojixu.monthly_notices import MonthlyNotices
 from gaojixu.native_tray import start_tray
 from gaojixu.store import Store, default_data_dir
@@ -26,12 +27,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--inspect", action="store_true")
     parser.add_argument("--widget-snapshot", action="store_true")
     parser.add_argument("--widget", choices=WIDGETS)
+    parser.add_argument("--notify-monthly-change", action="store_true")
     parser.add_argument("link", nargs="?")
     args = parser.parse_args(argv)
     if args.version:
         print(VERSION_LABEL)
         return 0
     directory = default_data_dir() if not args.data_dir else Path(args.data_dir)
+    if args.notify_monthly_change:
+        if not signal_monthly_change(directory):
+            print("No GaoJiXu monthly listener in this Windows session. The receiver will check on startup.", file=sys.stderr)
+            return 2
+        print("monthly-change-signaled")
+        return 0
     if args.inspect:
         _print_counts(Store(directory, readonly=True))
         return 0
@@ -49,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         if not url:
             print("搞积蓄正在启动，请稍后重试。", file=sys.stderr)
             return 2
-        open_window(url + target)
+        open_target(url, target, existing=True)
         return 0
     try:
         return _run(args, directory, instance, target)
@@ -81,18 +89,26 @@ def _run(args, directory, instance, target):
     try:
         instance.publish(server.server_address[1])
         if not args.no_browser:
+            server.desktop_widgets = start_widgets(server.url, instance.key)
             tray = start_tray(
                 lambda: open_window(server.url),
                 server.shutdown_requested.set,
                 MonthlyNotices(server).next_notice,
                 open_adventure=lambda: open_window(server.url + "#adventure"),
+                open_widgets=lambda: open_window(server.url + "#widgets"),
+                open_notice=lambda: open_window(server.url + "#fixed-expenses"),
             )
-            open_window(server.url + target)
+            server.desktop_tray = tray
+            open_target(server.url, target, manager=server.desktop_widgets)
+            if server.desktop_widgets:
+                server.desktop_widgets.restore()
         server.shutdown_requested.wait()
     except KeyboardInterrupt:
         pass
     finally:
         server.shutdown_requested.set()
+        if server.desktop_widgets:
+            server.desktop_widgets.close()
         server.shutdown()
         if tray:
             tray.close()

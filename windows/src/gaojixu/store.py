@@ -572,6 +572,24 @@ def _fixed_income_ledger_status(store, receipt) -> str:
     return "原流水已调整"
 
 
+def monthly_ledger_entry(store: Store, payment: dict, subscription: dict, account_id: str, existing=None):
+    when = read_cocoa(payment.get("paidAt"), store.tz) or store.now()
+    updated = {
+        **(existing or {}),
+        "id": f"auto-monthly|{payment['id']}",
+        "kind": "expense",
+        "accountID": account_id,
+        "amount": payment.get("amount"),
+        "categoryID": "subscription",
+        "date": cocoa_json(when),
+        "note": f"月供·{subscription.get('name') or '订阅'}",
+        "createdAt": (existing or {}).get("createdAt", cocoa_json(store.now())),
+    }
+    for key in ("targetAccountID", "targetAmount"):
+        updated.pop(key, None)
+    return updated
+
+
 def post_monthly_to_ledger(store: Store, payment: dict, subscription: dict, account_id: str):
     store.require_ready()
     entry_id = f"auto-monthly|{payment['id']}"
@@ -580,23 +598,13 @@ def post_monthly_to_ledger(store: Store, payment: dict, subscription: dict, acco
     currency = payment.get("currency")
     if owner is None or owner.get("isArchived") or owner.get("currency") != currency:
         raise AppError("请选择一个仍在使用、且与订阅同币种的扣款账户。", "invalid")
-    when = read_cocoa(payment.get("paidAt"), store.tz) or store.now()
-    updated = {
-        **(existing or {}),
-        "id": entry_id,
-        "kind": "expense",
-        "accountID": owner["id"],
-        "amount": payment.get("amount"),
-        "categoryID": "subscription",
-        "date": cocoa_json(when),
-        "note": f"月供·{subscription.get('name') or '订阅'}",
-        "createdAt": (existing or {}).get("createdAt", cocoa_json(store.now())),
-    }
+    updated = monthly_ledger_entry(store, payment, subscription, owner["id"], existing)
     if existing == updated:
         return entry_id
     if existing is None:
         finance._insert_entry(store, updated)
     else:
+        existing.clear()
         existing.update(updated)
     store.mark_financial()
     store.save()

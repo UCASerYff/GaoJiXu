@@ -89,6 +89,57 @@ body[data-theme="dark"] :is(.adv-shell, .adv-dialog, .adv-observation) {
 .adv-world { position: relative; height: 480px; isolation: isolate; overflow: hidden; border-radius: 13px; background: #243630 center / cover no-repeat; }
 .adv-battle-scene { background-image: url('/assets/mac/AdventureBattleV353.png'); }
 .adv-camp-scene { height: 500px; background-image: url('/assets/mac/AdventureCampV353.png'); }
+.adv-scene-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0;
+}
+.adv-world[data-renderer="webgl"] .adv-scene-canvas { opacity: 1; }
+.adv-world[data-renderer="webgl"] > .adv-actor {
+  left: var(--actor-x);
+  top: var(--actor-y);
+  right: auto;
+  bottom: auto;
+  width: var(--actor-w);
+  height: var(--actor-h);
+  transform: none;
+}
+.adv-world[data-renderer="webgl"] .adv-actor > :is(img, .adv-atlas) { opacity: 0; }
+.adv-world[data-renderer="webgl"] .adv-actor .adv-actor-label {
+  top: var(--actor-label-y);
+  bottom: auto;
+  transform: translateY(-50%);
+}
+.adv-world[data-renderer="webgl"] .adv-monster.selected::after { display: none; }
+.adv-world[data-renderer="webgl"].adv-strike :is(.adv-hero,.adv-monster) { animation: none; }
+.adv-world.adv-orbit { touch-action: none; cursor: grab; }
+.adv-world.adv-orbit:active { cursor: grabbing; }
+.adv-scene-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  left: 8px;
+  z-index: 4;
+  display: none;
+  justify-content: end;
+  gap: 5px;
+  align-items: center;
+  pointer-events: none;
+}
+.adv-world[data-renderer="webgl"] .adv-scene-controls { display: flex; }
+.adv-scene-controls span, .adv-scene-view {
+  border: 1px solid #ffffff55;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #142228dd;
+  color: white;
+  font-size: 11px;
+}
+.adv-scene-controls span { max-width: 70%; }
+.adv-scene-view { pointer-events: auto; font-weight: 650; }
 .adv-actor { position: absolute; display: grid; justify-items: center; align-items: end; text-align: center; background: transparent; padding: 0; border: 0; color: #fff; border-radius: 8px; }
 button.adv-actor:hover { background: transparent; filter: brightness(1.12); }
 button.adv-actor:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }

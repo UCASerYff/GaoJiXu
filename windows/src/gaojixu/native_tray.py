@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+import queue
 import sys
 import threading
 from ctypes import wintypes as win
@@ -23,8 +24,12 @@ _WM_TIMER = 0x0113
 _WM_LBUTTONDBLCLK = 0x0203
 _WM_RBUTTONUP = 0x0205
 _WM_TRAY = 0x8001
+_WM_NOTICE = 0x8002
 _NIN_SELECT = 0x0400
 _NIN_KEYSELECT = 0x0401
+_NIN_BALLOONSHOW = 0x0402
+_NIN_BALLOONHIDE = 0x0403
+_NIN_BALLOONTIMEOUT = 0x0404
 _NIN_BALLOONUSERCLICK = 0x0405
 _NIM_ADD, _NIM_MODIFY, _NIM_DELETE, _NIM_SETFOCUS, _NIM_SETVERSION = range(5)
 _NIF_MESSAGE, _NIF_ICON, _NIF_TIP, _NIF_INFO, _NIF_SHOWTIP = 0x01, 0x02, 0x04, 0x10, 0x80
@@ -102,13 +107,18 @@ def _short_text(value: str, capacity: int) -> str:
 
 
 class TrayIcon:
-    def __init__(self, open_window, exit_app, next_notice, open_adventure):
+    def __init__(self, open_window, exit_app, next_notice, open_adventure, open_widgets, open_notice, notice_event):
         self._windows = _Windows()
         self._menu = [(f"打开{APP_NAME}", open_window)]
         if open_adventure is not None:
             self._menu.append(("勇者冒险", open_adventure))
+        if open_widgets is not None:
+            self._menu.append(("桌面小组件", open_widgets))
         self._menu.append(("退出", exit_app))
         self._next_notice = next_notice
+        self._open_notice = open_notice or open_window
+        self._notice_event = notice_event
+        self._notice_queue = queue.SimpleQueue()
         self._callback = _wndproc(self._window_message)
         self._thread = threading.Thread(target=self._run, name="gaojixu-tray", daemon=True)
         self._ready = threading.Event()
@@ -148,13 +158,32 @@ class TrayIcon:
             return
         notice = self._next_notice()
         if notice is not None:
-            title, body = notice
-            data = self._icon_data(window)
-            data.flags = _NIF_INFO
-            data.info_flags = _NIIF_INFO | _NIIF_RESPECT_QUIET_TIME
-            data.title = _short_text(title, 64)
-            data.body = _short_text(body, 256)
-            self._windows.notify(_NIM_MODIFY, ctypes.byref(data))
+            title, body, *submitted = notice
+            if self._submit(window, title, body) and submitted:
+                submitted[0]()
+
+    def _submit(self, window, title, body) -> bool:
+        if not self._registered:
+            return False
+        data = self._icon_data(window)
+        data.flags = _NIF_INFO
+        data.info_flags = _NIIF_INFO | _NIIF_RESPECT_QUIET_TIME
+        data.title = _short_text(title, 64)
+        data.body = _short_text(body, 256)
+        sent = bool(self._windows.notify(_NIM_MODIFY, ctypes.byref(data)))
+        if self._notice_event:
+            self._notice_event("submitted" if sent else "rejected")
+        return sent
+
+    def test_notification(self, title, body) -> bool:
+        if not self._window or self._closing.is_set():
+            return False
+        done = threading.Event()
+        result = []
+        self._notice_queue.put((title, body, done, result))
+        if not self._windows.post_message(self._window, _WM_NOTICE, 0, 0):
+            return False
+        return done.wait(timeout=1.5) and result[0]
 
     def _show_menu(self, window) -> None:
         api = self._windows
@@ -181,10 +210,27 @@ class TrayIcon:
         try:
             if message == _WM_TRAY:
                 event = lparam & 0xFFFF
-                if event in {_NIN_SELECT, _NIN_KEYSELECT, _NIN_BALLOONUSERCLICK, _WM_LBUTTONDBLCLK}:
+                notice_events = {
+                    _NIN_BALLOONSHOW: "shown", _NIN_BALLOONHIDE: "hidden",
+                    _NIN_BALLOONTIMEOUT: "timed-out", _NIN_BALLOONUSERCLICK: "clicked",
+                }
+                if event in notice_events and self._notice_event:
+                    self._notice_event(notice_events[event])
+                if event == _NIN_BALLOONUSERCLICK:
+                    self._open_notice()
+                elif event in {_NIN_SELECT, _NIN_KEYSELECT, _WM_LBUTTONDBLCLK}:
                     self._menu[0][1]()
                 elif event == _WM_CONTEXTMENU or (event == _WM_RBUTTONUP and not self._modern_events):
                     self._show_menu(window)
+                return 0
+            if message == _WM_NOTICE:
+                title, body, done, result = self._notice_queue.get_nowait()
+                try:
+                    result.append(self._submit(window, title, body))
+                finally:
+                    if not result:
+                        result.append(False)
+                    done.set()
                 return 0
             if message == _WM_TIMER:
                 if not self._registered:
@@ -239,15 +285,18 @@ class TrayIcon:
 def start_tray(
     open_window: Callable[[], None],
     exit_app: Callable[[], None],
-    next_notice: Callable[[], tuple[str, str] | None] | None = None,
+    next_notice: Callable[[], tuple[str, str] | tuple[str, str, Callable[[], None]] | None] | None = None,
     *,
     open_adventure: Callable[[], None] | None = None,
+    open_widgets: Callable[[], None] | None = None,
+    open_notice: Callable[[], None] | None = None,
+    notice_event: Callable[[str], None] | None = None,
 ) -> TrayIcon | None:
     """Start a background Win32 message pump for interactive launches."""
     if sys.platform != "win32":
         return None
     try:
-        tray = TrayIcon(open_window, exit_app, next_notice, open_adventure)
+        tray = TrayIcon(open_window, exit_app, next_notice, open_adventure, open_widgets, open_notice, notice_event)
     except OSError:
         _log.exception("Windows notification area is unavailable")
         return None

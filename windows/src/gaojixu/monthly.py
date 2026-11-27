@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import uuid
@@ -16,6 +17,16 @@ from gaojixu.timeutil import add_months, cocoa_json, days_in_month, month_key, p
 
 OWNER = "com.gaojixu.savings"
 CURRENCIES = {"CNY", "USD", "EUR", "HKD", "JPY", "GBP"}
+
+
+class _LoadedState(dict):
+    """A decoded state paired with the exact row and authority that were opened."""
+
+    def __init__(self, values, original, authority):
+        super().__init__(values)
+        self.original = original
+        self.authority = authority
+        self.revision = hashlib.sha256(authority["transactionID"].encode("utf-8") + b"\0" + original).hexdigest()
 
 
 def new_id() -> str:
@@ -40,7 +51,7 @@ def _database_path(directory: Path) -> Path:
 
 def _read_authority(directory: Path) -> dict | None:
     path = _authority_path(directory)
-    if not path.is_file():
+    if not path.is_file() or path.is_symlink():
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -50,7 +61,7 @@ def _read_authority(directory: Path) -> dict | None:
         return None
     if payload.get("schemaVersion") != 1 or payload.get("ownerBundleID") != OWNER or payload.get("module") != "monthly":
         return None
-    if not payload.get("transactionID"):
+    if not isinstance(payload.get("transactionID"), str) or not payload["transactionID"]:
         return None
     return payload
 
@@ -73,7 +84,7 @@ def _marker_ok(root: Path, receipt: dict) -> bool:
         path = Path(reference)
     else:
         return False
-    if not path.is_file():
+    if not path.is_file() or path.is_symlink():
         return False
     try:
         marker = json.loads(path.read_text(encoding="utf-8"))
@@ -95,6 +106,13 @@ def _marker_ok(root: Path, receipt: dict) -> bool:
     )
 
 
+def _read_row(connection) -> bytes:
+    rows = connection.execute("SELECT id, json FROM state LIMIT 2").fetchall()
+    if len(rows) != 1 or rows[0][0] != 1 or not isinstance(rows[0][1], bytes):
+        raise ValueError("invalid monthly row")
+    return rows[0][1]
+
+
 def load_state(root: Path):
     directory = directory_for(root)
     database = _database_path(directory)
@@ -103,49 +121,51 @@ def load_state(root: Path):
     if not database.is_file() or database.is_symlink():
         return "protected", None, "固定支出库不是普通文件，未创建或替换。"
     try:
-        connection = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
+        connection = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", timeout=1, uri=True)
         try:
-            rows = connection.execute("SELECT id, json FROM state").fetchall()
+            blob = _read_row(connection)
         finally:
             connection.close()
-        if len(rows) != 1 or rows[0][0] != 1 or not isinstance(rows[0][1], (bytes, bytearray)):
-            return "protected", None, "月供业务库行数不符，原文件未改。"
-        payload = json.loads(bytes(rows[0][1]).decode("utf-8"))
+        payload = json.loads(blob.decode("utf-8"))
         if not isinstance(payload, dict) or payload.get("schemaVersion") != 1 or payload.get("rulesVersion") != 1:
             return "protected", None, "月供业务库版本不受支持，原文件未改。"
         for key in ("subscriptions", "payments", "claims", "benefits", "events", "reviews"):
             if key in payload and (not isinstance(payload[key], list) or not all(isinstance(row, dict) for row in payload[key])):
                 return "protected", None, "月供业务记录格式有误，原文件未改。"
-    except (sqlite3.Error, OSError, UnicodeError, json.JSONDecodeError):
+    except (sqlite3.Error, OSError, ValueError):
         return "protected", None, "月供业务库无法读取，原文件未改。"
     receipt = _read_authority(directory)
     if receipt is None or not _marker_ok(root, receipt):
         return "readonly", payload, "固定支出可以查看。写入凭据不在这台电脑上，未改原库。"
-    return "ready", payload, ""
+    return "ready", _LoadedState(payload, blob, receipt), ""
 
 
-def _write_state(root: Path, payload: dict) -> None:
-    status, _current, notice = load_state(root)
-    if status != "ready":
-        raise AppError(notice or "固定支出库不能写入。", "protected")
-    database = _database_path(directory_for(root))
+def _write_state(root: Path, payload: _LoadedState) -> None:
+    directory = directory_for(root)
+    database = _database_path(directory)
+    if not database.is_file() or database.is_symlink():
+        raise AppError("固定支出库不能写入。", "protected")
     blob = _dumps(payload)
-    connection = sqlite3.connect(database)
     try:
-        connection.execute("BEGIN IMMEDIATE")
-        cursor = connection.execute("UPDATE state SET json=? WHERE id=1", (blob,))
-        if cursor.rowcount != 1:
-            connection.execute("ROLLBACK")
-            raise AppError("月供业务记录未落盘。", "persistence")
-        connection.execute("COMMIT")
-    except sqlite3.Error as exc:
+        connection = sqlite3.connect(database.resolve().as_uri() + "?mode=rw", timeout=1, uri=True)
         try:
-            connection.execute("ROLLBACK")
-        except sqlite3.Error:
-            pass
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute("BEGIN IMMEDIATE")
+            if _read_row(connection) != payload.original:
+                raise AppError("固定支出刚被更新，请刷新并重新核对。", "monthly-conflict")
+            def ensure_authority():
+                receipt = _read_authority(directory)
+                if receipt != payload.authority or not _marker_ok(root, receipt):
+                    raise AppError("固定支出资料授权已变化，停止写入。", "monthly-protected")
+
+            ensure_authority()
+            connection.execute("UPDATE state SET json=? WHERE id=1", (blob,))
+            ensure_authority()
+            connection.execute("COMMIT")
+        finally:
+            connection.close()
+    except (sqlite3.Error, ValueError) as exc:
         raise AppError("月供业务记录未落盘。", "persistence") from exc
-    finally:
-        connection.close()
 
 
 def create_new(root: Path, now) -> dict:
@@ -217,10 +237,12 @@ def _empty_state(now) -> dict:
     }
 
 
-def _require(root: Path):
+def _require(root: Path, expected_revision=None):
     status, state, notice = load_state(root)
     if status != "ready" or state is None:
         raise AppError(notice or "固定支出库不能写入。", "protected")
+    if expected_revision is not None and expected_revision != state.revision:
+        raise AppError("固定支出刚被更新，请刷新并重新核对。", "monthly-conflict")
     return state
 
 
@@ -264,7 +286,7 @@ def _amount(value, currency, *, zero=False):
 
 
 def save_subscription(root: Path, payload: dict, now) -> dict:
-    state = _require(root)
+    state = _require(root, payload.get("expectedRevision"))
     name = str(payload.get("name") or "").strip()
     if not name:
         raise AppError("请填写订阅名称。", "invalid")
@@ -369,7 +391,7 @@ def save_subscription(root: Path, payload: dict, now) -> dict:
 
 
 def record_payment(root: Path, payload: dict, now, ledger_writer=None, *, validate=None) -> dict:
-    state = _require(root)
+    state = _require(root, payload.get("expectedRevision"))
     subscription = _row(state, "subscriptions", payload.get("subscriptionID"))
     if subscription is None:
         raise AppError("没有这项订阅。", "invalid")
@@ -507,7 +529,7 @@ def _claim_key(benefit, state, date, zone):
 
 
 def save_benefit(root: Path, payload: dict, now) -> dict:
-    state = _require(root)
+    state = _require(root, payload.get("expectedRevision"))
     name = str(payload.get("name") or "").strip()
     kind = payload.get("kind") or "daily"
     if not name or kind not in {"daily", "weekly"}:
@@ -531,7 +553,7 @@ def save_benefit(root: Path, payload: dict, now) -> dict:
     return row
 
 
-def claim_benefit(root: Path, benefit_id: str, now, date=None, expected=None) -> dict:
+def claim_benefit(root: Path, benefit_id: str, now, date=None, expected=None, expected_timezone=None) -> dict:
     state = _require(root)
     benefit = _row(state, "benefits", benefit_id)
     if benefit is None:
@@ -546,6 +568,8 @@ def claim_benefit(root: Path, benefit_id: str, now, date=None, expected=None) ->
         raise AppError("对应日期的权益不可记录。", "invalid")
     if expected and claim_id != expected:
         raise AppError("领取周期已变化，请刷新后重试。", "conflict")
+    if expected_timezone is not None and expected_timezone != (state.get("preferences", {}).get("timezone") or ""):
+        raise AppError("业务时区已变化，请刷新后重试。", "conflict")
     if _row(state, "claims", claim_id):
         return {"claimed": False, "id": claim_id}
     state.setdefault("claims", []).append({
@@ -560,7 +584,7 @@ def claim_benefit(root: Path, benefit_id: str, now, date=None, expected=None) ->
 
 
 def change_item(root, payload, now):
-    state = _require(root)
+    state = _require(root, payload.get("expectedRevision"))
     collection = payload.get("collection")
     operation = payload.get("operation")
     if collection not in {"subscriptions", "payments", "events", "benefits", "claims"}:
@@ -609,7 +633,7 @@ def change_item(root, payload, now):
 
 
 def save_event(root, payload, now):
-    state = _require(root)
+    state = _require(root, payload.get("expectedRevision"))
     name = str(payload.get("name") or "").strip()
     if not name:
         raise AppError("请填写事项名称。", "invalid")
@@ -632,7 +656,7 @@ def save_event(root, payload, now):
 
 
 def save_review(root, payload, now):
-    state = _require(root)
+    state = _require(root, payload.get("expectedRevision"))
     subscription = _row(state, "subscriptions", payload.get("subscriptionID"))
     month = payload.get("month")
     rating = int(payload.get("rating", -1))
@@ -651,7 +675,7 @@ def save_review(root, payload, now):
 
 
 def update_preferences(root, payload, now):
-    state = _require(root)
+    state = _require(root, payload.get("expectedRevision"))
     prefs = state.setdefault("preferences", {})
     for key in ("privacy", "notifications"):
         if isinstance(payload.get(key), bool):
@@ -766,6 +790,7 @@ def summary(root: Path, tz, now=None):
     return {
         "status": status,
         "notice": notice,
+        "revision": state.revision if status == "ready" else None,
         "subscriptions": subscriptions,
         "bills": sorted({bill["id"]: bill for bill in bills}.values(), key=lambda bill: (bill["due"], bill["id"])),
         "payments": payments,

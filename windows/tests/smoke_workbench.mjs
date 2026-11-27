@@ -172,8 +172,34 @@ try {
   await click(fixed("payment-delete"));
   await textHas("#fixed-expenses","还没有已核实的支付");
   assert.equal(await js("state.summary.monthExpense"),0);
+
+  await click(".toolbar-menu summary");
+  await click('[data-workbench="settings"]');
+  await dialog();
+  await click('[data-settings="appearance"]');
+  await edit({language:"en"});
+  await textHas("#fixed-expenses h1","Fixed expenses");
+  await textHas("#fixed-expenses","No verified payments yet.");
+  await click(fixed("monthly-settings"));
+  await textHas("#editor","No external monthly finance provider has been verified");
+  await waitFor("#fixed-notification-test");
+  await click("#fixed-notification-test");
+  await textHas("#fixed-notification-result","Windows did not accept the notification.");
+  await click("#editor-cancel");
+  await close();
+  await click('#fixed-sections [data-route="fixed-income"]');
+  await textHas("#fixed-income","Income plans");
+  await textHas("#fixed-income","Recorded");
+  await click(fixed("income-edit"));
+  await textHas("#editor","New fixed income plan");
+  await textHas("#editor","Salary");
+  await click("#editor-cancel");
+  await close();
+  await click('#fixed-sections [data-route="benefits"]');
+  await textHas("#benefits","Recorded this period");
+  await snapshot("benefits-english-dark-1060",1060,730,1.5);
   assert.deepEqual(failures,[]);
-  console.log("Workbench smoke passed for fixed income, expenses, benefits, widgets, dark mode and relaunch routes");
+  console.log("Workbench smoke passed for fixed income, expenses, benefits, widgets, dark mode, English and relaunch routes");
 } finally {
   websocket.close();
 }

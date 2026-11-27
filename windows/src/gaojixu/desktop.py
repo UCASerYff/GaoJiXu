@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -12,7 +14,9 @@ import webbrowser
 from pathlib import Path
 from urllib.error import URLError
 from urllib.parse import parse_qs, urlsplit
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
+
+from gaojixu.errors import AppError
 
 WIDGETS = ("all", "calendar", "net-worth", "expenses", "benefits", "adventure")
 ROUTES = {
@@ -94,15 +98,70 @@ class RunningInstance:
             self.lock = None
 
 
+def chromium():
+    if os.name != "nt":
+        return None
+    edge_path = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft/Edge/Application/msedge.exe"
+    chrome_path = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Google/Chrome/Application/chrome.exe"
+    edge = shutil.which("msedge")
+    return next((candidate for candidate in (Path(edge) if edge else edge_path, edge_path, chrome_path) if candidate.is_file()), None)
+
+
 def open_window(url: str):
-    if os.name == "nt":
-        edge_path = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft/Edge/Application/msedge.exe"
-        chrome_path = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Google/Chrome/Application/chrome.exe"
-        executable = shutil.which("msedge") or next((candidate for candidate in (edge_path, chrome_path) if candidate.is_file()), None)
-        if executable:
-            try:
-                subprocess.Popen([str(executable), "--app=" + url], close_fds=True)
-                return
-            except OSError:
-                pass
+    executable = chromium()
+    if executable:
+        try:
+            subprocess.Popen([str(executable), "--app=" + url], close_fds=True)
+            return
+        except OSError:
+            pass
     webbrowser.open(url)
+
+
+def start_widgets(url, instance_key):
+    executable = chromium()
+    if executable is None:
+        return None
+    from gaojixu.desktop_widgets import DesktopWidgets, WidgetWindows
+
+    base = Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "GaoSeries" / "GaoJiXuDesktop" / instance_key
+    try:
+        manager = DesktopWidgets(url, base, executable, WidgetWindows())
+    except (AttributeError, OSError):
+        # Older builds can still show the same widget as an independent browser window.
+        return None
+    manager.start()
+    return manager
+
+
+def open_target(url, target, *, manager=None, existing=False):
+    kind = parse_qs(urlsplit(target).query).get("widget", [None])[0]
+    if kind in WIDGETS and kind != "all":
+        if manager is not None:
+            try:
+                manager.open(kind)
+                return
+            except AppError:
+                pass
+        if existing and _request_widget(url, kind):
+            return
+    open_window(url + target)
+
+
+def _request_widget(url, kind):
+    try:
+        with urlopen(url, timeout=2) as response:
+            html = response.read(65536).decode("utf-8")
+        token = re.search(r'<meta name="gao-token" content="([A-Za-z0-9_-]+)">', html)
+        if token is None:
+            return False
+        request = Request(
+            url + "api/desktop/widgets",
+            data=json.dumps({"command": "open", "widget": kind}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-Gao-Token": token[1]},
+        )
+        with urlopen(request, timeout=3) as response:
+            received = json.load(response)
+            return received.get("ok") is True
+    except (OSError, URLError, UnicodeError, ValueError):
+        return False

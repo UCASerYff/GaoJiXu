@@ -1,6 +1,7 @@
 param(
     [string]$Python = "python",
     [string]$DistributionDirectory = (Join-Path $PSScriptRoot "dist"),
+    [string]$BuildDirectory = (Join-Path $PSScriptRoot "build"),
     [switch]$SkipInstaller
 )
 
@@ -16,7 +17,7 @@ function Assert-LastExit($step) {
     }
 }
 
-$buildDir = Join-Path $PSScriptRoot "build"
+$buildDir = [IO.Path]::GetFullPath($BuildDirectory)
 $dependencies = Join-Path $buildDir "release-deps"
 $src = Join-Path $PSScriptRoot "src"
 $assets = Join-Path $src "gaojixu\assets"

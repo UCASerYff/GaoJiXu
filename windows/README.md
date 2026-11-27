@@ -1,8 +1,10 @@
 # 搞积蓄 Windows 版
 
-面向 Windows 10/11 x64 的独立应用版本 **4.06**。Windows 构建号为 **2**，命令行显示 `4.06+2`。
+面向 Windows 10/11 x64 的独立应用版本 **4.06**。Windows 构建号为 **3**，命令行显示 `4.06+3`。
 
 主窗口与五个小组件优先使用本机 Microsoft Edge 或 Chromium 的应用模式。找不到可用的应用模式入口时，在系统默认浏览器中打开。服务只监听 `127.0.0.1`。
+
+Windows 桌面小组件可固定在前台、调整大小和位置、关闭或跳回主窗口。应用保存布局，退出后下次启动会恢复上次仍打开的固定窗口。布局保存在 `%LOCALAPPDATA%\GaoSeries\GaoJiXuDesktop\`，按资料目录分别管理。
 
 ## 安装
 
@@ -33,6 +35,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 - `GaoJiXu-Windows-4.06-x64.msi.sha256`
 
 GitHub Actions 在 Windows 运行器上构建并静默安装 MSI，验证两个 x64 程序、应用资源、适用的已有 Windows 资料、流水、月供数据库、财务快照及卸载保留资料。安装包和校验文件作为 `GaoJiXu-Windows-4.06-x64` 构建产物上传。
+
+在已有安装候选的工作区，可以用独立路径构建并验收新版。升级测试从旧 MSI 安装应用，写入隔离资料，再核对新版安装、降级保护和卸载保留资料。
+
+```powershell
+cd windows
+$work = Join-Path $PWD 'build/release-4.06.3'
+$candidate = Join-Path $work 'candidate'
+.\build.ps1 -BuildDirectory $work -DistributionDirectory $candidate
+python tests/smoke_install.py "$candidate/GaoJiXu-Windows-4.06-x64.msi" --upgrade-from dist/GaoJiXu-Windows-4.06-x64.msi
+```
 
 只跑源码测试可使用以下命令。
 
@@ -70,7 +82,8 @@ PYTHONPATH=src python3 launch.py --data-dir /tmp/gaojixu-dev --no-browser --port
 | `--create-empty` | 在空目录明确新建资料后退出；与 `--serve` 同时使用时新建后继续服务 |
 | `--inspect` | 只读打印账户、流水、目标和等级条数，不打印备注 |
 | `--widget-snapshot` | 写出 schema 2 的 `gaojixu-widget.json` |
-| `--version` | 打印 `4.06+2` |
+| `--notify-monthly-change` | 在同一 Windows 会话中唤醒使用同一资料目录的月供接收器 |
+| `--version` | 打印 `4.06+3` |
 | `--widget TYPE` | 打开每日收支与积蓄 `calendar`、净资产 `net-worth`、固定支出 `expenses`、权益打卡 `benefits` 或勇者冒险 `adventure` 窗口 |
 
 ## 数据
@@ -81,6 +94,7 @@ PYTHONPATH=src python3 launch.py --data-dir /tmp/gaojixu-dev --no-browser --port
 | `settings.json` | 外观、语言、背景色、默认币种、预算结转 |
 | `gaojixu-widget.json` | schema 2 财务快照，另有一份在 `IsolatedWidgetGroup/`。高于 schema 2 的已有快照不覆盖 |
 | `monthly-account-bindings.json` | 固定支出订阅与流水账户的绑定 |
+| `monthly-reconciliation.json` | 月供对账状态及 `__integratedMonthly` 已管理流水标识 |
 | `IntegratedFinance/Monthly/monthly.sqlite` | 固定支出与权益。表 `state` 只有一行 id=1 的 JSON，和 Mac 相同 |
 | `IntegratedFinance/Monthly/authority.json` | 模式 `new` 或已核验的 `migrated` 才允许写入 |
 
@@ -92,6 +106,8 @@ Mac 上账本位于 `~/Library/Application Support/GaoSeries/Savings/`，小组�
 
 本仓库的账本金额在 `library.json` 里。Mac 源码把凭据放在钥匙串，不写进这个文件。Windows 版不另造凭据库，也不读取 macOS 钥匙串。
 
+已授权的 Windows 月供提供方完成写入后可运行 `GaoJiXu-cli.exe --data-dir <同一资料目录> --notify-monthly-change`。该命令通过当前 Windows 会话的 `Local\GaoJiXu.MonthlyChanged.<资料目录哈希>` 命名事件唤醒接收器。事件没有业务载荷。接收器在启动时、收到信号时及每 60 秒重新读取已激活的本地权威库和授权凭据。自动记账只处理有同币种账户绑定的确认支付，撤销只影响曾由接收器管理的自动流水。安装回归使用隔离 SQLite 替身，外部应用尚待联调。
+
 ## Windows 功能
 
 | 工作台 | 功能 |
@@ -100,15 +116,15 @@ Mac 上账本位于 `~/Library/Application Support/GaoSeries/Savings/`，小组�
 | 收支 | 流水编辑、搜索和筛选、账户、信用账户和余额调整、同币种和跨币种转账、预算、周期记账、CSV、报表 |
 | 固定收支 | 固定收入确认到账、订阅、待核实账期、支付历史和账户绑定、权益领取、到期事项、复盘及对账 |
 | 攒钱 | 目标管理、积蓄明细、存取对应流水、统计和冒险奖励 |
-| 冒险 | 像素战斗与营地、自动结算、装备、技能、宠物、祈愿、图鉴和成就 |
+| 冒险 | WebGL 立体战斗与营地、视角旋转与缩放、自动结算、装备、技能、宠物、祈愿、图鉴和成就 |
 | 设置 | 模块设置、外观与数据页。可在文件资源管理器打开现用资料和小组件快照目录 |
-| Windows 集成 | 系统托盘、固定支出提醒、`gaojixu://` 跳转、可单独打开的每日收支与积蓄、净资产、固定支出、权益打卡和勇者冒险小组件 |
+| Windows 集成 | 系统托盘、固定支出提醒与测试通知、`gaojixu://` 跳转、可独立固定与恢复的五种桌面小组件 |
 
 ## 已知限制
 
-- Windows 界面由浏览器引擎绘制。冒险使用项目像素素材、网页战斗与营地场景，并以 2.5D 观察场景对应 macOS 的 SceneKit 3D。SpriteKit 的动画、SceneKit 的视角交互及部分界面细节仍有差异。冒险和部分固定收支文案仍为中文。
-- 小组件通过独立窗口打开，支持开始菜单入口。Windows 版没有 WidgetKit、Windows 小组件面板集成、macOS 菜单栏或 Dock。
-- 固定支出提醒按业务时区结算，应用运行时通过 Windows 托盘的 `Shell_NotifyIconW` 提交通知。已验证托盘注册和定时回调，未触发桌面横幅验证。实际呈现取决于 Windows 通知设置。
-- macOS 的月供跨应用通知、离线迁移工具和钥匙串属于 Mac 环境。Windows 可读取相应格式的资料文件。已有月供库缺少写入授权或核验标记时会以只读状态打开。
+- Windows 冒险通过 WebGL 实现立体空间、相机、光照和动作动画，并沿用项目像素素材。WebGL 不可用时使用平面呈现。SpriteKit 动画、SceneKit 三维模型、系统字形和部分界面细节存在平台差异。
+- 小组件使用独立 Windows 桌面窗口和开始菜单入口。Windows 11 Widgets Board 的 Win32 提供方需要包身份和包清单注册，目前 MSI 采用独立窗方式。[Microsoft Widget provider manifest](https://learn.microsoft.com/en-us/windows/apps/develop/widgets/widget-provider-manifest)
+- 固定支出提醒按业务时区结算，应用运行时通过 Windows 托盘的 `Shell_NotifyIconW` 提交通知。设置中可以发测试通知。非输入测试桌面没有 Explorer 通知区域，真实系统横幅尚待验收。
+- Windows 月供接收器使用本地会话命名事件。已有月供库缺少写入授权或核验标记时以只读状态打开。Mac 的离线迁移工具和钥匙串属于 Mac 环境。
 - 同一资料目录应只由一个应用实例写入。
 - 财务修订号的字节算法与 Mac 不同。两边先后打开时，Mac 会按自己的算法写回修订号；`financialUpdatedAt` 只在财务内容变化时前进。
