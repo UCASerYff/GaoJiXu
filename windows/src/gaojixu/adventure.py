@@ -1,7 +1,4 @@
-"""冒险数值：属性、自动战斗、祈愿保底、强化、宠物。
-
-词条和技能绝技参与伤害。界面不绘制 SpriteKit 场景。
-"""
+"""冒险属性、自动战斗、祈愿、装备、技能和宠物。"""
 
 from __future__ import annotations
 
@@ -129,6 +126,23 @@ def pet_stars(store, pet_id: str) -> int:
     return 0
 
 
+def equipped_pet_ids(store) -> list[str]:
+    # Windows 初版将上阵名单放在 adventure 内，Mac 存在资料库顶层。
+    raw = _adv(store).get("equippedPetIDs")
+    if not isinstance(raw, list):
+        raw = store.doc.get("equippedPetIDs")
+    if not isinstance(raw, list) or not raw:
+        return []
+    owned = {row.get("petID") for row in _pets(store) if isinstance(row, dict) and int(row.get("stars") or 0) > 0}
+    return list(dict.fromkeys(item for item in raw
+                              if isinstance(item, str) and item in catalog.PET_BY_ID and item in owned))[:catalog.MAX_PETS]
+
+
+def _set_equipped_pet_ids(store, ids: list[str]) -> None:
+    _adv(store).pop("equippedPetIDs", None)
+    store.doc["equippedPetIDs"] = ids
+
+
 def equipped_ids(store) -> list[str]:
     raw = _adv(store).get("equippedTechniqueIDs") or []
     if not isinstance(raw, list):
@@ -210,22 +224,17 @@ def hero_stats(store) -> dict:
         critical_damage += _enhanced_float(store, definition, definition.critical_damage)
         lifesteal += _enhanced_float(store, definition, definition.lifesteal)
         reduction += _enhanced_float(store, definition, definition.damage_reduction)
-    pet_ids = _adv(store).get("equippedPetIDs") or []
-    if isinstance(pet_ids, list):
-        for pet_id in pet_ids:
-            pet = catalog.PET_BY_ID.get(pet_id)
-            stars = pet_stars(store, pet_id)
-            if not pet or stars <= 0:
-                continue
-            scale = catalog.pet_multiplier(min(catalog.MAX_PET_STARS, max(1, stars)))
-            attack += catalog.swift_round(pet.attack * scale)
-            defense += catalog.swift_round(pet.defense * scale)
-            vitality += catalog.swift_round(pet.vitality * scale)
-            speed += catalog.swift_round(pet.speed * scale)
-            fortune += catalog.swift_round(pet.fortune * scale)
-            physical += catalog.swift_round(pet.physical * scale)
-            magic += catalog.swift_round(pet.magic * scale)
-            shield += catalog.swift_round(pet.shield * scale)
+    for pet_id in equipped_pet_ids(store):
+        pet = catalog.PET_BY_ID[pet_id]
+        scale = catalog.pet_multiplier(pet_stars(store, pet_id))
+        attack += catalog.swift_round(pet.attack * scale)
+        defense += catalog.swift_round(pet.defense * scale)
+        vitality += catalog.swift_round(pet.vitality * scale)
+        speed += catalog.swift_round(pet.speed * scale)
+        fortune += catalog.swift_round(pet.fortune * scale)
+        physical += catalog.swift_round(pet.physical * scale)
+        magic += catalog.swift_round(pet.magic * scale)
+        shield += catalog.swift_round(pet.shield * scale)
     stats = {
         "attack": 12 + growth * 3 + attack + catalog.trunc(technique_bonus(store, "attack")) + catalog.trunc(technique_bonus(store, "incomePower") * 100),
         "defense": 6 + growth * 2 + defense + catalog.trunc(technique_bonus(store, "defense")) + catalog.trunc(technique_bonus(store, "budgetPower") * 100),
@@ -291,7 +300,12 @@ def monster_magic_resistance(store) -> int:
     return bonus + min(100_000, current_stage(store)) * 2
 
 
-def hero_power(store, stats=None) -> int:
+def equipment_power(store, definition) -> int:
+    return max(1, catalog.swift_round(
+        definition.base_power * catalog.equipment_multiplier(enhancement_level(store, definition.id))))
+
+
+def power_breakdown(store, stats=None) -> dict:
     stats = stats or hero_stats(store)
     level = stats["level"]
     growth = max(0, level - 1)
@@ -300,19 +314,14 @@ def hero_power(store, stats=None) -> int:
         + (24 + growth * 4) * catalog.W_VITALITY + (10 + growth // 3) * catalog.W_SPEED
         + (6 + growth // 3) * catalog.W_RESIST * 2 + level * catalog.W_LEVEL
     )
-    gear = 0
-    for definition in equipped_definitions(store):
-        gear += max(1, catalog.swift_round(definition.base_power * catalog.equipment_multiplier(enhancement_level(store, definition.id))))
-    techniques = 0
-    for technique_id in equipped_ids(store):
-        techniques += _technique_power(store, catalog.TECHNIQUE_BY_ID[technique_id])
-    pets = 0
-    for pet_id in _adv(store).get("equippedPetIDs") or []:
-        pet = catalog.PET_BY_ID.get(pet_id)
-        stars = pet_stars(store, pet_id)
-        if pet and stars > 0:
-            pets += pet.power(stars)
-    return int(base + gear + techniques + pets)
+    gear = sum(equipment_power(store, definition) for definition in equipped_definitions(store))
+    techniques = sum(_technique_power(store, catalog.TECHNIQUE_BY_ID[item]) for item in equipped_ids(store))
+    pets = sum(catalog.PET_BY_ID[item].power(pet_stars(store, item)) for item in equipped_pet_ids(store))
+    return {"base": base, "equipment": gear, "techniques": techniques, "pets": pets}
+
+
+def hero_power(store, stats=None) -> int:
+    return sum(power_breakdown(store, stats).values())
 
 
 def _technique_power(store, definition, level=None) -> int:
@@ -628,16 +637,27 @@ def draw(store, count: int, pool: str) -> dict:
 
 
 def exchange_ticket(store) -> dict:
+    return exchange_resource(store, "tickets")
+
+
+def exchange_resource(store, resource: str) -> dict:
     store.require_ready()
+    amount, label = {"tickets": (1, "星券"), "insight": (50, "悟性"), "stardust": (50, "星尘")}.get(resource, (0, ""))
+    if not amount:
+        raise AppError("请选择星券、悟性或星尘。", "invalid")
     adventure = _adv(store)
     coins = int(adventure.get("coins") or 0)
-    if coins < catalog.TICKET_EXCHANGE_COST:
-        raise AppError(f"金币不足，需要 {catalog.TICKET_EXCHANGE_COST} 金币。", "invalid")
-    adventure["coins"] = coins - catalog.TICKET_EXCHANGE_COST
-    adventure["tickets"] = int(adventure.get("tickets") or 0) + 1
-    add_event(store, "兑换星券", f"消耗 {catalog.TICKET_EXCHANGE_COST} 金币兑换 1 张免费星券。", "ticket.fill")
+    cost = catalog.TICKET_EXCHANGE_COST
+    if coins < cost:
+        raise AppError(f"金币不足，需要 {cost} 金币。", "invalid")
+    adventure["coins"] = coins - cost
+    adventure[resource] = int(adventure.get(resource) or 0) + amount
+    if resource == "tickets":
+        add_event(store, "兑换星券", f"消耗 {cost} 金币兑换 1 张免费星券。", "ticket.fill")
+    else:
+        add_event(store, "冒险商店", f"消耗 {cost} 金币购买 {amount} {label}。", "cart.fill")
     store.save_game()
-    return {"tickets": adventure["tickets"], "coins": adventure["coins"]}
+    return {resource: adventure[resource], "coins": adventure["coins"]}
 
 
 def equip(store, definition_id: str) -> None:
@@ -648,6 +668,19 @@ def equip(store, definition_id: str) -> None:
     _items(store)[definition.slot] = definition.id
     add_event(store, "更换装备", f"已将“{definition.name}”装备至{catalog.slot_title(definition.slot)}。", definition.symbol)
     store.save_game()
+
+
+def unequip(store, slot: str) -> dict:
+    store.require_ready()
+    if slot not in catalog.SLOT_INDEX:
+        raise AppError("请选择有效的装备部位。", "invalid")
+    removed = _items(store).pop(slot, None)
+    if removed:
+        legacy = {"mainHand": "equippedWeaponID", "chest": "equippedArmorID", "relic": "equippedCharmID"}
+        if slot in legacy:
+            _adv(store).pop(legacy[slot], None)
+        store.save_game()
+    return {"id": removed}
 
 
 def equip_best(store) -> dict:
@@ -664,7 +697,7 @@ def equip_best(store) -> dict:
         candidates = [item for item in owned if item.slot == slot]
         if not candidates:
             continue
-        best = max(candidates, key=lambda item: (item.base_power, item.rarity, item.name))
+        best = min(candidates, key=lambda item: (-item.base_power, -item.rarity, item.name))
         selected[slot] = best.id
     if not selected:
         raise AppError("背包里还没有可以装备的物品。", "invalid")
@@ -689,9 +722,65 @@ def enhance(store, definition_id: str) -> dict:
         raise AppError(f"星尘不足，本次强化需要 {cost} 星尘。", "invalid")
     adventure["stardust"] = int(adventure.get("stardust") or 0) - cost
     row["enhancementLevel"] = current + 1
-    add_event(store, "装备强化", f"消耗 {cost} 星尘，将“{definition.name}”强化至 +{current + 1}。", definition.symbol)
+    add_event(store, "装备强化", f"消耗 {cost} 星尘，将“{definition.name}”强化至 +{current + 1}，战力提升至 {equipment_power(store, definition)}。", "sparkles")
     store.save_game()
     return {"level": current + 1, "cost": cost}
+
+
+def _rarity_limit(value: int) -> str:
+    if value not in range(1, 6):
+        raise AppError("整理仅支持普通至传说品质。", "invalid")
+    return catalog.RARITY_TITLE[value]
+
+
+def sell_equipment(store, definition_id: str, count: int = 1) -> dict:
+    store.require_ready()
+    definition = catalog.EQUIPMENT_BY_ID.get(definition_id)
+    if not definition or owned_count(store, definition_id) <= 0:
+        raise AppError("背包中没有这件装备。", "invalid")
+    if _items(store).get(definition.slot) == definition_id:
+        raise AppError("已装备的物品不能出售，请先卸下。", "invalid")
+    row = next(item for item in _equipment(store) if item.get("definitionID") == definition_id)
+    count = min(max(1, count), int(row["count"]))
+    earned = _sale_stardust(store, definition) * count
+    row["count"] -= count
+    if row["count"] <= 0:
+        _equipment(store).remove(row)
+    _adv(store)["stardust"] = int(_adv(store).get("stardust") or 0) + earned
+    add_event(store, "出售装备", f"出售 {count} 件“{definition.name}”，获得 {earned} 星尘。", "sparkles")
+    store.save_game()
+    return {"count": count, "earned": earned}
+
+
+def sell_equipment_group(store, maximum_rarity: int | None = None) -> dict:
+    store.require_ready()
+    rarity = _rarity_limit(maximum_rarity) if maximum_rarity is not None else None
+    equipped = set(_items(store).values())
+    sold = earned = 0
+    rows = _equipment(store)
+    for row in rows[:]:
+        definition = catalog.EQUIPMENT_BY_ID.get(row.get("definitionID"))
+        if not definition or (maximum_rarity is not None and definition.rarity > maximum_rarity):
+            continue
+        kept = int(maximum_rarity is None or definition.id in equipped)
+        count = max(0, int(row.get("count") or 0) - kept)
+        if count <= 0:
+            continue
+        sold += count
+        earned += _sale_stardust(store, definition) * count
+        row["count"] -= count
+        if row["count"] <= 0:
+            rows.remove(row)
+    if sold <= 0:
+        message = f"没有可出售的{rarity}及以下未装备物品。" if rarity else "没有可清理的重复装备；每种装备会保留 1 件。"
+        raise AppError(message, "invalid")
+    _adv(store)["stardust"] = int(_adv(store).get("stardust") or 0) + earned
+    if rarity is None:
+        add_event(store, "清理重复装备", f"出售 {sold} 件重复装备，获得 {earned} 星尘。", "shippingbox.and.arrow.backward.fill")
+    else:
+        add_event(store, "一键出售", f"出售 {sold} 件{rarity}及以下未装备物品，获得 {earned} 星尘。", "trash.slash.fill")
+    store.save_game()
+    return {"count": sold, "earned": earned}
 
 
 def equip_technique(store, technique_id: str) -> None:
@@ -707,6 +796,16 @@ def equip_technique(store, technique_id: str) -> None:
     ids.append(technique_id)
     _adv(store)["equippedTechniqueIDs"] = ids
     store.save_game()
+
+
+def unequip_technique(store, technique_id: str) -> dict:
+    store.require_ready()
+    ids = equipped_ids(store)
+    if technique_id in ids:
+        ids.remove(technique_id)
+        _adv(store)["equippedTechniqueIDs"] = ids
+        store.save_game()
+    return {"equipped": False}
 
 
 def equip_best_techniques(store) -> dict:
@@ -726,6 +825,29 @@ def equip_best_techniques(store) -> dict:
     add_event(store, "技能一键装配", f"已按未参悟的 1 重初始战力，装配当前最强的 {len(selected)} 门技能。", "books.vertical.fill")
     store.save_game()
     return {"count": len(selected)}
+
+
+def forget_techniques(store, maximum_rarity: int) -> dict:
+    store.require_ready()
+    rarity = _rarity_limit(maximum_rarity)
+    equipped = set(equipped_ids(store))
+    rows = _techniques(store)
+    forgotten = returned = 0
+    for row in rows[:]:
+        definition = catalog.TECHNIQUE_BY_ID.get(row.get("techniqueID"))
+        level = min(catalog.MAX_TECHNIQUE, max(0, int(row.get("level") or 0)))
+        if not definition or not level or definition.id in equipped or definition.rarity > maximum_rarity:
+            continue
+        forgotten += 1
+        returned += definition.rarity ** 2 * 40
+        returned += sum(catalog.technique_upgrade_cost(definition.rarity, rank) for rank in range(1, level))
+        rows.remove(row)
+    if not forgotten:
+        raise AppError(f"没有可遗忘的{rarity}及以下未装配技能。", "invalid")
+    _adv(store)["insight"] = int(_adv(store).get("insight") or 0) + returned
+    add_event(store, "一键遗忘", f"遗忘 {forgotten} 门{rarity}及以下未装配技能，返还 {returned} 悟性。", "brain.head.profile")
+    store.save_game()
+    return {"count": forgotten, "earned": returned}
 
 
 def upgrade_technique(store, technique_id: str) -> dict:
@@ -773,9 +895,10 @@ def hatch_pet(store) -> dict:
     definition = catalog.PETS[store.rng.randrange(len(catalog.PETS))]
     adventure["coins"] = int(adventure.get("coins") or 0) - catalog.PET_EGG_COST
     result = grant_pet(store, definition)
+    store.latest_pet_hatch = {"petID": definition.id, "name": definition.name, "stars": pet_stars(store, definition.id), "result": result}
     add_event(store, "宠物蛋孵化", f"孵化出“{definition.name}”：{result}。", "pawprint.fill")
     store.save_game()
-    return {"petID": definition.id, "name": definition.name, "result": result}
+    return store.latest_pet_hatch
 
 
 def equip_pet(store, pet_id: str) -> None:
@@ -783,15 +906,39 @@ def equip_pet(store, pet_id: str) -> None:
     definition = catalog.PET_BY_ID.get(pet_id)
     if not definition or pet_stars(store, pet_id) <= 0:
         raise AppError("需要先孵化这只宠物。", "invalid")
-    ids = [item for item in (_adv(store).get("equippedPetIDs") or []) if isinstance(item, str)]
+    ids = equipped_pet_ids(store)
     if pet_id in ids:
         return
     if len(ids) >= catalog.MAX_PETS:
         raise AppError(f"最多同时上阵 {catalog.MAX_PETS} 只宠物。", "invalid")
     ids.append(pet_id)
-    _adv(store)["equippedPetIDs"] = ids
+    _set_equipped_pet_ids(store, ids)
     add_event(store, "宠物上阵", f"“{definition.name}”已加入冒险队伍。", "pawprint.fill")
     store.save_game()
+
+
+def unequip_pet(store, pet_id: str) -> dict:
+    store.require_ready()
+    ids = equipped_pet_ids(store)
+    if pet_id in ids:
+        ids.remove(pet_id)
+        _set_equipped_pet_ids(store, ids)
+        store.save_game()
+    return {"equipped": False}
+
+
+def equip_best_pets(store) -> dict:
+    store.require_ready()
+    candidates = [(pet_stars(store, pet.id), pet) for pet in catalog.PETS]
+    ranked = [(stars, pet) for stars, pet in candidates if stars > 0]
+    ranked.sort(key=lambda pair: (-pair[1].power(pair[0]), pair[1].name))
+    selected = [pet.id for _, pet in ranked[:catalog.MAX_PETS]]
+    if not selected:
+        raise AppError("宠物背包里还没有伙伴。", "invalid")
+    _set_equipped_pet_ids(store, selected)
+    add_event(store, "宠物一键上阵", f"已按当前星级战力选出最强的 {len(selected)} 只宠物。", "pawprint.fill")
+    store.save_game()
+    return {"count": len(selected)}
 
 
 def grant_savings_tickets(store, amount: float, goal_title: str, completed: bool, currency_symbol: str) -> None:
@@ -861,8 +1008,12 @@ def normalize_loaded(store) -> bool:
         if any(row.get("petID") not in catalog.PET_BY_ID for row in original) or len(original) != len(cleaned):
             doc["pets"] = cleaned
             changed = True
+    pet_ids = equipped_pet_ids(store)
+    if "equippedPetIDs" in adventure or (doc.get("equippedPetIDs") is not None and doc["equippedPetIDs"] != pet_ids):
+        _set_equipped_pet_ids(store, pet_ids)
+        changed = True
     items = adventure.get("equippedItems")
-    if not isinstance(items, dict) or not items:
+    if not isinstance(items, dict):
         migrated = {}
         if adventure.get("equippedWeaponID"):
             migrated["mainHand"] = adventure["equippedWeaponID"]

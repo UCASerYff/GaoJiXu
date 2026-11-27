@@ -93,8 +93,7 @@ def _tokenize(text: str) -> list[list[str]]:
     return records
 
 
-def import_ledger(store, text: str) -> dict:
-    store.require_ready()
+def _parse_rows(store, text: str):
     stripped = text[1:] if text.startswith("\ufeff") else text
     rows = []
     skipped = 0
@@ -125,17 +124,68 @@ def import_ledger(store, text: str) -> dict:
             "date": when, "kind": kind, "accountName": cleaned[2], "targetAccountName": cleaned[3],
             "categoryName": cleaned[4], "note": cleaned[5], "amount": amount, "currency": cleaned[7].upper() or "CNY",
         })
+    return rows, skipped
+
+
+def _existing_keys(store):
     existing = set()
     for entry in finance.entries(store):
         when = read_cocoa(entry.get("date"), store.tz)
         if when is None:
             continue
         existing.add((unix_minute(when), entry.get("kind"), entry.get("accountID"), money_number(entry.get("amount")), entry.get("note") or ""))
+    return existing
+
+
+def preview_ledger(store, text: str) -> dict:
+    store.require_ready()
+    rows, skipped = _parse_rows(store, text)
+    existing = _existing_keys(store)
+    accounts = finance.active_accounts(store)
+    by_name = {row.get("name"): row["id"] for row in accounts}
+    currencies = {row.get("name"): row.get("currency") for row in accounts}
+    new_names = set()
+    preview = []
+    imported = duplicates = cross_currency = 0
+    for row in rows:
+        source = row["accountName"]
+        target = row["targetAccountName"]
+        is_transfer = row["kind"] == "transfer"
+        if is_transfer and (not target or target == source):
+            skipped += 1
+            continue
+        key = (unix_minute(row["date"]), row["kind"], by_name.get(source) or ("new", source), money_number(row["amount"]), row["note"])
+        if key in existing:
+            duplicates += 1
+            continue
+        existing.add(key)
+        if source not in by_name:
+            new_names.add(source)
+        source_currency = currencies.setdefault(source, row["currency"])
+        if is_transfer:
+            if target not in by_name:
+                new_names.add(target)
+            if source_currency != currencies.setdefault(target, row["currency"]):
+                cross_currency += 1
+        imported += 1
+        if len(preview) < 10:
+            preview.append({**row, "date": format_minute(row["date"], store.tz), "amount": money_number(row["amount"])})
+    return {"importable": imported, "duplicates": duplicates, "skipped": skipped,
+            "newAccounts": len(new_names), "crossCurrency": cross_currency, "preview": preview}
+
+
+def import_ledger(store, text: str) -> dict:
+    store.require_ready()
+    rows, skipped = _parse_rows(store, text)
+    existing = _existing_keys(store)
     created_accounts = 0
     imported = 0
     duplicates = 0
     by_name = {row.get("name"): row for row in finance.active_accounts(store)}
     for row in rows:
+        if row["kind"] == "transfer" and (not row["targetAccountName"] or row["targetAccountName"] == row["accountName"]):
+            skipped += 1
+            continue
         source = by_name.get(row["accountName"])
         if source is None:
             currency = row["currency"] if row["currency"] in catalog.CURRENCIES else "CNY"

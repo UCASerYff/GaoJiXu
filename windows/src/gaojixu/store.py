@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from gaojixu import adventure, catalog, csvutil, finance, monthly, widget
+from gaojixu import adventure, adventure_view, catalog, csvutil, finance, monthly, widget
 from gaojixu.errors import AppError
 from gaojixu.timeutil import add_months, cocoa_json, in_zone, month_key, read_cocoa
 from gaojixu.version import SCHEMA_VERSION, VERSION_LABEL
@@ -41,8 +42,9 @@ def dumps(payload: dict) -> bytes:
 
 
 class Store:
-    def __init__(self, directory: Path | str, now=None, tz=None, rng=None):
+    def __init__(self, directory: Path | str, now=None, tz=None, rng=None, readonly: bool = False):
         self.directory = Path(directory)
+        self.readonly = readonly
         self.tz = tz or datetime.now().astimezone().tzinfo or timezone.utc
         self._now = now or (lambda: datetime.now(self.tz))
         self.rng = rng or random.Random()
@@ -50,7 +52,8 @@ class Store:
         self.status = "missing"
         self.notice = ""
         self.currency = "CNY"
-        self.settings = {"appearance": "light", "language": "zh", "currency": "CNY"}
+        self.settings = {"appearance": "system", "language": "zh", "currency": "CNY",
+                         "backgroundHex": "", "budgetRolloverEnabled": False}
         self.financial_revision = None
         self.persisted_fingerprint = None
         self.financial_updated_at = None
@@ -66,7 +69,7 @@ class Store:
         return current.astimezone(self.tz)
 
     def require_ready(self):
-        if self.status != "ready" or self.doc is None:
+        if self.readonly or self.status != "ready" or self.doc is None:
             raise AppError(self.notice or "资料库不能写入。", "protected")
 
     def library_path(self) -> Path:
@@ -81,24 +84,28 @@ class Store:
         except (OSError, json.JSONDecodeError):
             return
         if isinstance(payload, dict):
-            self.settings.update({key: payload[key] for key in ("appearance", "language", "currency") if key in payload})
+            self.settings.update(payload)
         if self.settings.get("currency") in catalog.CURRENCIES:
             self.currency = self.settings["currency"]
 
     def update_settings(self, payload: dict) -> dict:
-        if payload.get("appearance") in {"light", "dark"}:
+        if self.status != "ready":
+            self.require_ready()
+        if payload.get("appearance") in {"system", "light", "dark"}:
             self.settings["appearance"] = payload["appearance"]
-        if payload.get("language") in {"zh", "en"}:
+        if payload.get("language") in {"system", "zh", "en"}:
             self.settings["language"] = payload["language"]
         if payload.get("currency") in catalog.CURRENCIES:
             self.settings["currency"] = payload["currency"]
             self.currency = payload["currency"]
             self.finances_dirty = True
-        self.directory.mkdir(parents=True, exist_ok=True)
-        (self.directory / "settings.json").write_text(
-            json.dumps(self.settings, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        tint = payload.get("backgroundHex")
+        if isinstance(tint, str) and (not tint or re.fullmatch(r"#[0-9a-fA-F]{6}", tint)):
+            self.settings["backgroundHex"] = tint
+        rollover = payload.get("budgetRolloverEnabled", payload.get("budgetRollover"))
+        if isinstance(rollover, bool):
+            self.settings["budgetRolloverEnabled"] = rollover
+        self._atomic(self.directory / "settings.json", dumps(self.settings))
         if self.status == "ready":
             widget.publish(self)
         return self.settings
@@ -152,6 +159,8 @@ class Store:
         self.financial_updated_at = read_cocoa(self.doc.get("financialUpdatedAt"), self.tz)
         self.persisted_fingerprint = finance.financial_fingerprint(self)
         self.financial_revision = self.persisted_fingerprint
+        if self.readonly:
+            return
         if changed or self.finances_dirty:
             self.finances_dirty = True
             self.save()
@@ -227,6 +236,8 @@ class Store:
         self.status = "protected"
         self.doc = None
         self.notice = notice
+        if self.readonly:
+            return
         marker = self.directory / READ_ONLY_MARKER
         if marker.exists():
             return
@@ -242,17 +253,47 @@ class Store:
         temporary.write_bytes(data)
         os.replace(temporary, path)
 
+    def goal_rows(self) -> list:
+        rows = []
+        for goal in finance.goals(self):
+            balance = finance.goal_balance(self, goal)
+            target = float(goal.get("targetAmount") or 0)
+            rows.append({
+                **{key: goal.get(key) for key in ("id", "title", "currency", "status", "notes", "symbol", "colorKey", "savingsAccountID")},
+                "targetAmount": goal.get("targetAmount"),
+                "startingAmount": goal.get("startingAmount"),
+                "balance": balance,
+                "progress": min(1, max(0, balance / target)) if target else 0,
+                "deadline": _display_date(self, goal.get("deadline")),
+            })
+        return rows
+
+    def adventure_snapshot(self, goal_rows=None):
+        self.require_ready()
+        if goal_rows is None:
+            goal_rows = self.goal_rows()
+        return adventure_view.snapshot(self, goal_rows)
+
     def snapshot(self) -> dict:
         if self.status == "ready":
             finance.materialize_recurring(self)
         monthly_view = monthly.summary(self.directory, self.tz, self.now)
+        from gaojixu import monthly_bridge
+        if self.status == "ready":
+            try:
+                monthly_bridge.flush_cleanup(self, monthly_view)
+            except (AppError, OSError):
+                self.notice = "月供自动流水尚待对账，恢复资料写入后将重试。"
+            monthly_view["reconciliation"] = monthly_bridge.pending(self, monthly_view)
         base = {
             "status": self.status,
             "notice": self.notice,
             "version": VERSION_LABEL,
             "schema": SCHEMA_VERSION,
             "currency": self.currency,
-            "settings": self.settings,
+            "today": self.now().date().isoformat(),
+            "financeUpdatedAt": self.financial_updated_at.strftime("%Y-%m-%d %H:%M") if self.financial_updated_at else "",
+            "settings": {key: self.settings[key] for key in ("appearance", "language", "currency", "backgroundHex", "budgetRolloverEnabled")},
             "monthly": monthly_view,
             "categories": [{"id": item[0], "name": item[1], "kind": item[2]} for item in catalog.CATEGORIES],
             "accountTypes": [{"id": key, "name": value[0]} for key, value in catalog.ACCOUNT_TYPES.items()],
@@ -262,42 +303,11 @@ class Store:
             return base
         currency = self.currency
         adventure_state = self.doc.get("adventure") or {}
-        stats = adventure.hero_stats(self)
-        monster = adventure.current_monster(self)
-        owned_gear = []
-        for row in self.doc.get("equipment") or []:
-            definition = catalog.EQUIPMENT_BY_ID.get(row.get("definitionID"))
-            if not definition:
-                continue
-            owned_gear.append({
-                "id": definition.id, "name": definition.name, "slot": definition.slot,
-                "rarity": definition.rarity, "count": row.get("count"),
-                "enhancement": adventure.enhancement_level(self, definition.id),
-            })
-        owned_tech = []
-        for row in self.doc.get("techniques") or []:
-            definition = catalog.TECHNIQUE_BY_ID.get(row.get("techniqueID"))
-            if definition and int(row.get("level") or 0) > 0:
-                owned_tech.append({"id": definition.id, "name": definition.name, "level": row.get("level"), "rarity": definition.rarity})
-        pets = []
-        for row in self.doc.get("pets") or []:
-            definition = catalog.PET_BY_ID.get(row.get("petID"))
-            if definition:
-                pets.append({"id": definition.id, "name": definition.name, "stars": row.get("stars"), "role": definition.role})
-        goal_rows = []
-        for goal in finance.goals(self):
-            balance = finance.goal_balance(self, goal)
-            target = float(goal.get("targetAmount") or 0)
-            goal_rows.append({
-                **{key: goal.get(key) for key in ("id", "title", "currency", "status", "notes", "symbol", "colorKey", "savingsAccountID")},
-                "targetAmount": goal.get("targetAmount"),
-                "startingAmount": goal.get("startingAmount"),
-                "balance": balance,
-                "progress": min(1, max(0, balance / target)) if target else 0,
-                "deadline": _display_date(self, goal.get("deadline")),
-            })
+        goal_rows = self.goal_rows()
         return {
             **base,
+            "lastLedgerAccountID": self.doc.get("lastLedgerAccountID"),
+            "financeRevision": self.financial_revision,
             "summary": {
                 "netWorth": finance.net_worth(self, currency),
                 "monthIncome": finance.month_income(self, currency),
@@ -324,39 +334,15 @@ class Store:
                 for row in finance.rules(self)
             ],
             "fixedIncome": {
+                "categories": {key: catalog.category_name(key) for key in sorted(catalog.FIXED_INCOME_CATEGORIES)},
                 "plans": list(self.doc.get("fixedIncomePlans") or []),
                 "receipts": [
-                    {**row, "received": _display_date(self, row.get("receivedOn"))}
+                    {**row, "received": _display_date(self, row.get("receivedOn")),
+                     "ledgerStatus": _fixed_income_ledger_status(self, row)}
                     for row in self.doc.get("fixedIncomeReceipts") or []
                 ],
             },
-            "adventure": {
-                "level": adventure_state.get("level"),
-                "experience": adventure_state.get("experience"),
-                "experienceNeeded": adventure.experience_needed(int(adventure_state.get("level") or 1)),
-                "heroHP": adventure_state.get("heroHP"),
-                "heroMaxHP": stats["maxHP"],
-                "attack": stats["attack"],
-                "defense": stats["defense"],
-                "power": adventure.hero_power(self, stats),
-                "monster": monster.name,
-                "monsterChapter": monster.chapter,
-                "monsterHP": adventure_state.get("monsterHP"),
-                "monsterMaxHP": adventure.monster_max_hp(self),
-                "stage": adventure.current_stage(self),
-                "message": adventure_state.get("lastBattleMessage") or "",
-                "equipped": adventure_state.get("equippedItems") or {},
-                "equippedTechniques": adventure.equipped_ids(self),
-                "equippedPets": adventure_state.get("equippedPetIDs") or [],
-                "pity": {
-                    "equipment": adventure._pity(self, "equipment"),
-                    "technique": adventure._pity(self, "technique"),
-                },
-                "gear": owned_gear,
-                "techniques": owned_tech,
-                "pets": pets,
-                "petCatalog": [{"id": pet.id, "name": pet.name, "role": pet.role} for pet in catalog.PETS],
-            },
+            "adventure": self.adventure_snapshot(goal_rows),
             "days": finance.daily_summary(self, currency),
         }
 
@@ -396,6 +382,7 @@ class Store:
         return csvutil.import_ledger(self, text)
 
     def create_monthly(self):
+        self.require_ready()
         state = monthly.create_new(self.directory, self.now)
         return {"created": True, "subscriptions": len(state.get("subscriptions") or [])}
 
@@ -423,7 +410,6 @@ def _validate_fixed_income(document: dict):
 
 
 def _account(name, account_type, color, moment, offset):
-    created = moment if offset == 0 else moment.replace(microsecond=0) 
     from datetime import timedelta
     created = moment + timedelta(seconds=offset)
     return {
@@ -520,9 +506,13 @@ def _public_account(store, row):
     }
 
 
-def _public_entry(store, row):
-    source = finance.account(store, row.get("accountID"))
-    target = finance.account(store, row.get("targetAccountID"))
+def _public_entry(store, row, account_index=None, savings_entry_ids=None):
+    source = (account_index.get(row.get("accountID")) if account_index is not None
+              else finance.account(store, row.get("accountID")))
+    target = (account_index.get(row.get("targetAccountID")) if account_index is not None
+              else finance.account(store, row.get("targetAccountID")))
+    if savings_entry_ids is None:
+        savings_entry_ids = {record.get("ledgerEntryID") for record in finance.records(store)}
     return {
         "id": row.get("id"),
         "kind": row.get("kind"),
@@ -530,15 +520,17 @@ def _public_entry(store, row):
         "accountName": (source or {}).get("name") or "已归档账户",
         "targetAccountID": row.get("targetAccountID"),
         "targetAccountName": (target or {}).get("name") or "",
+        "targetCurrency": (target or {}).get("currency"),
         "amount": row.get("amount"),
         "targetAmount": row.get("targetAmount"),
         "categoryID": row.get("categoryID"),
         "categoryName": catalog.category_name(row.get("categoryID") or ""),
         "note": row.get("note") or "",
         "date": _display_date(store, row.get("date")),
+        "timestamp": row.get("date"),
         "currency": (source or {}).get("currency") or "CNY",
         "balanceAdjustment": row.get("categoryID") == "balance-adjustment",
-        "savings": any(record.get("ledgerEntryID") == row.get("id") for record in finance.records(store)),
+        "savings": row.get("id") in savings_entry_ids,
     }
 
 
@@ -554,6 +546,7 @@ def _public_record(store, row):
         "categoryName": catalog.SAVINGS_CATEGORIES.get(row.get("category"), row.get("category")),
         "note": row.get("note") or "",
         "date": _display_date(store, row.get("date")),
+        "timestamp": row.get("date"),
         "currency": row.get("currency") or (goal or {}).get("currency") or "CNY",
         "fundingAccountID": row.get("fundingAccountID"),
         "savingsAccountID": row.get("savingsAccountID"),
@@ -568,17 +561,28 @@ def _display_date(store, value) -> str:
     return local.strftime("%Y-%m-%d %H:%M")
 
 
+def _fixed_income_ledger_status(store, receipt) -> str:
+    entry_id = f"fixed-income|{str(receipt.get('planID')).lower()}|{receipt.get('month')}"
+    entry = next((row for row in finance.entries(store) if row.get("id") == entry_id), None)
+    if entry is None:
+        return "原流水已删除，保留确认记录"
+    pairs = (("amount", "amount"), ("accountID", "accountID"), ("date", "receivedOn"), ("categoryID", "category"))
+    if entry.get("kind") == "income" and all(entry.get(key) == receipt.get(value) for key, value in pairs):
+        return "已入账"
+    return "原流水已调整"
+
+
 def post_monthly_to_ledger(store: Store, payment: dict, subscription: dict, account_id: str):
     store.require_ready()
     entry_id = f"auto-monthly|{payment['id']}"
-    if any(row.get("id") == entry_id for row in finance.entries(store)):
-        return entry_id
+    existing = next((row for row in finance.entries(store) if row.get("id") == entry_id), None)
     owner = finance.account(store, account_id)
     currency = payment.get("currency")
     if owner is None or owner.get("isArchived") or owner.get("currency") != currency:
         raise AppError("请选择一个仍在使用、且与订阅同币种的扣款账户。", "invalid")
     when = read_cocoa(payment.get("paidAt"), store.tz) or store.now()
-    finance._insert_entry(store, {
+    updated = {
+        **(existing or {}),
         "id": entry_id,
         "kind": "expense",
         "accountID": owner["id"],
@@ -586,8 +590,14 @@ def post_monthly_to_ledger(store: Store, payment: dict, subscription: dict, acco
         "categoryID": "subscription",
         "date": cocoa_json(when),
         "note": f"月供·{subscription.get('name') or '订阅'}",
-        "createdAt": cocoa_json(store.now()),
-    })
+        "createdAt": (existing or {}).get("createdAt", cocoa_json(store.now())),
+    }
+    if existing == updated:
+        return entry_id
+    if existing is None:
+        finance._insert_entry(store, updated)
+    else:
+        existing.update(updated)
     store.mark_financial()
     store.save()
     return entry_id

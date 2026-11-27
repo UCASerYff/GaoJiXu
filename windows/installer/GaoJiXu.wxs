@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="$(var.ProductCode)" Name="搞积蓄" Language="2052" Codepage="936"
+           Version="$(var.ProductVersion)" Manufacturer="搞系列"
+           UpgradeCode="FF4410A3-38F1-41F5-B534-A0D1F2228F0A">
+    <Package InstallerVersion="500" Platform="x64" InstallScope="perUser"
+             SummaryCodepage="936" Compressed="yes" />
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="已安装较新的搞积蓄版本。" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="low" />
+    <Condition Message="搞积蓄需要 Windows 10 或 Windows 11 x64。">
+      <![CDATA[Installed OR (VersionNT64 AND GAOJIXU_WINDOWS_MAJOR = "#10")]]>
+    </Condition>
+    <Property Id="GAOJIXU_WINDOWS_MAJOR">
+      <RegistrySearch Id="WindowsMajorVersion" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+                      Name="CurrentMajorVersionNumber" Type="raw" Win64="yes" />
+    </Property>
+    <Icon Id="GaoJiXuIcon.ico" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="GaoJiXuIcon.ico" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="INSTALLFOLDER" Secure="yes" />
+    <Property Id="GAOJIXU_TEST_INSTALL" Secure="yes" />
+    <Property Id="GAOJIXU_STATE_KEY" Secure="yes" Value="Software\GaoSeries\GaoJiXu" />
+    <!-- Running installs use Windows Installer's FilesInUse dialog. -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="DisableShutdown" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="INSTALLFOLDER" Name="GaoJiXu">
+          <Component Id="GaoJiXuAppFiles" Guid="89B4E1AC-11D3-4F50-8C7C-0FBC643D54FE" Win64="yes">
+            <File Id="GaoJiXuApp" Source="$(var.PayloadDir)\GaoJiXu.exe" />
+            <File Id="GaoJiXuCli" Source="$(var.PayloadDir)\GaoJiXu-cli.exe" />
+            <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+            <RegistryValue Root="HKCU" Key="[GAOJIXU_STATE_KEY]"
+                           Name="InstallPath" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+          </Component>
+          <Component Id="GaoJiXuProtocol" Guid="85A3FEA4-8EF4-485A-A5ED-E0995AA26189" Win64="yes">
+            <Condition>NOT GAOJIXU_TEST_INSTALL</Condition>
+            <RegistryKey Root="HKCU" Key="Software\Classes\gaojixu">
+              <RegistryValue Type="string" Value="URL:GaoJiXu" />
+              <RegistryValue Name="URL Protocol" Type="string" Value="" KeyPath="yes" />
+              <RegistryValue Key="DefaultIcon" Type="string" Value="&quot;[INSTALLFOLDER]GaoJiXu.exe&quot;,0" />
+              <RegistryValue Key="shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]GaoJiXu.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="GaoJiXuMenuFolder" Name="搞积蓄">
+          <Component Id="GaoJiXuShortcuts" Guid="5310FA48-B0F1-491A-975B-BC177BE315E4" Win64="yes">
+            <Condition>NOT GAOJIXU_TEST_INSTALL</Condition>
+            <Shortcut Id="MainShortcut" Name="搞积蓄" Target="[INSTALLFOLDER]GaoJiXu.exe" WorkingDirectory="INSTALLFOLDER" />
+            <Shortcut Id="CalendarShortcut" Name="搞积蓄 - 每日收支与积蓄" Target="[INSTALLFOLDER]GaoJiXu.exe"
+                      Arguments="--widget calendar" WorkingDirectory="INSTALLFOLDER" />
+            <Shortcut Id="NetWorthShortcut" Name="搞积蓄 - 净资产" Target="[INSTALLFOLDER]GaoJiXu.exe"
+                      Arguments="--widget net-worth" WorkingDirectory="INSTALLFOLDER" />
+            <Shortcut Id="ExpensesShortcut" Name="搞积蓄 - 固定支出" Target="[INSTALLFOLDER]GaoJiXu.exe"
+                      Arguments="--widget expenses" WorkingDirectory="INSTALLFOLDER" />
+            <Shortcut Id="BenefitsShortcut" Name="搞积蓄 - 权益打卡" Target="[INSTALLFOLDER]GaoJiXu.exe"
+                      Arguments="--widget benefits" WorkingDirectory="INSTALLFOLDER" />
+            <Shortcut Id="AdventureShortcut" Name="搞积蓄 - 勇者冒险" Target="[INSTALLFOLDER]GaoJiXu.exe"
+                      Arguments="--widget adventure" WorkingDirectory="INSTALLFOLDER" />
+            <RemoveFolder Id="RemoveMenuFolder" On="uninstall" />
+            <RegistryValue Root="HKCU" Key="Software\GaoSeries\GaoJiXu"
+                           Name="Shortcuts" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="Application" Title="搞积蓄" Level="1" Absent="disallow">
+      <ComponentRef Id="GaoJiXuAppFiles" />
+      <ComponentRef Id="GaoJiXuProtocol" />
+      <ComponentRef Id="GaoJiXuShortcuts" />
+    </Feature>
+
+    <UIRef Id="WixUI_Common" />
+    <UI>
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Microsoft YaHei UI" Size="9" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Microsoft YaHei UI" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Microsoft YaHei UI" Size="10" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+      <Dialog Id="GaoJiXuWelcome" Width="370" Height="175" Title="[ProductName] 安装程序">
+        <Control Id="Title" Type="Text" X="20" Y="23" Width="330" Height="23"
+                 Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Bigger}安装搞积蓄 $(var.DisplayVersion)" />
+        <Control Id="Description" Type="Text" X="20" Y="64" Width="330" Height="36"
+                 Transparent="yes" NoPrefix="yes" Text="安装仅适用于当前 Windows 用户。安装和卸载均保留资料。" />
+        <Control Id="Install" Type="PushButton" X="238" Y="142" Width="56" Height="18"
+                 Text="安装" Default="yes">
+          <Publish Event="EndDialog" Value="Return">1</Publish>
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="301" Y="142" Width="56" Height="18"
+                 Text="取消" Cancel="yes">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+      </Dialog>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return">1</Publish>
+      <InstallUISequence>
+        <Show Dialog="GaoJiXuWelcome" Before="ProgressDlg">NOT Installed</Show>
+      </InstallUISequence>
+    </UI>
+  </Product>
+</Wix>

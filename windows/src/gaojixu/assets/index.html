@@ -1,416 +1,57 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="gao-token" content="{{TOKEN}}">
-<title>搞积蓄</title>
-<style>
-  :root {
-    color-scheme: light;
-    --paper: #f6f1e7;
-    --ink: #1c2b24;
-    --green: #1f4d3a;
-    --green-2: #2f6b50;
-    --card: #fffaf3;
-    --line: #e4d8c6;
-    --muted: #6d6458;
-    --danger: #8c3a32;
-    --ok: #1f4d3a;
-  }
-  body[data-theme="dark"] {
-    color-scheme: dark;
-    --paper: #17211c;
-    --ink: #f3efe6;
-    --green: #d7ecdf;
-    --green-2: #8fbfa4;
-    --card: #22302a;
-    --line: #31443b;
-    --muted: #c3b8a6;
-    --danger: #ffb4a8;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif; background: var(--paper); color: var(--ink); }
-  header { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 18px 24px; background: var(--green); color: #f6f1e7; }
-  body[data-theme="dark"] header { color: #17211c; }
-  header h1 { margin: 0; font-size: 22px; font-weight: 650; }
-  header p { margin: 4px 0 0; opacity: .85; font-size: 13px; }
-  button, input, select, textarea { font: inherit; color: inherit; }
-  button { background: var(--green); color: #f6f1e7; border: 0; border-radius: 999px; padding: 8px 14px; cursor: pointer; }
-  body[data-theme="dark"] button { color: #17211c; }
-  button.ghost { background: transparent; color: inherit; border: 1px solid var(--line); }
-  button.danger { background: var(--danger); color: white; }
-  nav { display: flex; gap: 8px; padding: 12px 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-  nav button { background: transparent; color: var(--ink); }
-  nav button.active { background: var(--green); color: #f6f1e7; }
-  body[data-theme="dark"] nav button.active { color: #17211c; }
-  main { padding: 20px 24px 48px; max-width: 1100px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; margin-bottom: 14px; }
-  .card h2 { margin: 0 0 10px; font-size: 16px; }
-  .metric { font-size: 26px; font-weight: 650; }
-  .muted { color: var(--muted); font-size: 13px; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
-  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
-  input, select, textarea { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  .banner { padding: 12px 14px; border-radius: 12px; background: #efe2c4; margin-bottom: 12px; }
-  body[data-theme="dark"] .banner { background: #3a3224; }
-  .hidden { display: none; }
-  .bar { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
-  .bar span { display: block; height: 100%; background: var(--green-2); }
-  .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-  .day { border: 1px solid var(--line); border-radius: 10px; padding: 6px; font-size: 12px; min-height: 64px; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="gao-token" content="{{TOKEN}}">
+  <meta name="gao-version" content="{{VERSION}}">
+  <link rel="icon" href="/assets/mac/GaoJiXuIcon.png">
+  <link rel="stylesheet" href="/assets/workbench.css">
+  <link rel="stylesheet" href="/assets/finance.css">
+  <link rel="stylesheet" href="/assets/adventure.css">
+  <script defer src="/assets/workbench.js"></script>
+  <script defer src="/assets/finance-ui.js"></script>
+  <script defer src="/assets/fixed.js"></script>
+  <script defer src="/assets/adventure.js"></script>
+  <script defer src="/assets/widgets.js"></script>
+  <title>搞积蓄</title>
 </head>
 <body>
-<header>
-  <div>
-    <h1>搞积蓄</h1>
-    <p>Windows 版 {{VERSION}} · 只在这台电脑上记账</p>
-  </div>
-  <button id="quit" class="ghost">退出</button>
-</header>
-<nav>
-  <button data-tab="overview" class="active">总览</button>
-  <button data-tab="ledger">收支</button>
-  <button data-tab="goals">攒钱</button>
-  <button data-tab="adventure">冒险</button>
-  <button data-tab="settings">设置</button>
-</nav>
-<main>
-  <div id="banner" class="banner hidden"></div>
-  <section id="overview"></section>
-  <section id="ledger" class="hidden"></section>
-  <section id="goals" class="hidden"></section>
-  <section id="adventure" class="hidden"></section>
-  <section id="settings" class="hidden"></section>
-</main>
-<script>
-const token = document.querySelector('meta[name="gao-token"]').content;
-let state = null;
-const headers = {"Content-Type":"application/json","X-Gao-Token":token};
-async function api(path, body) {
-  const response = await fetch(path, {method:"POST", headers, body: JSON.stringify(body || {})});
-  const data = await response.json();
-  if (!data.ok) throw new Error(data.error || "没有完成");
-  state = data.state;
-  render();
-  return data.result;
-}
-async function refresh() {
-  const response = await fetch("/api/state", {headers});
-  state = await response.json();
-  render();
-}
-function money(value, currency) {
-  const amount = Number(value || 0);
-  const digits = currency === "JPY" || currency === "KRW" ? 0 : 2;
-  return (currency || "CNY") + " " + amount.toLocaleString("zh-CN", {minimumFractionDigits: digits, maximumFractionDigits: digits});
-}
-function options(rows, selected, label) {
-  return rows.map(row => `<option value="${row.id}" ${row.id===selected?"selected":""}>${label(row)}</option>`).join("");
-}
-function render() {
-  document.body.dataset.theme = state.settings && state.settings.appearance === "dark" ? "dark" : "light";
-  const banner = document.getElementById("banner");
-  if (state.status !== "ready") {
-    banner.classList.remove("hidden");
-    banner.innerHTML = `<strong>${state.status === "missing" ? "还没有资料库" : "资料处于保护状态"}</strong><div>${state.notice || ""}</div>` +
-      (state.status === "missing" ? `<p><button id="create">创建我的资料库</button></p>` : "");
-  } else if (state.notice) {
-    banner.classList.remove("hidden");
-    banner.textContent = state.notice;
-  } else banner.classList.add("hidden");
-  const create = document.getElementById("create");
-  if (create) create.onclick = () => api("/api/library/create", {}).catch(showError);
-  renderOverview(); renderLedger(); renderGoals(); renderAdventure(); renderSettings();
-}
-function showError(error) { alert(error.message || error); }
-function accounts() { return (state.accounts || []).filter(row => !row.archived); }
-function renderOverview() {
-  const root = document.getElementById("overview");
-  if (state.status !== "ready") { root.innerHTML = ""; return; }
-  const summary = state.summary;
-  const days = (state.days || []).map(day => `<div class="day"><strong>${day.day}</strong><div class="muted">支 ${day.expense}</div><div class="muted">收 ${day.income}</div></div>`).join("");
-  root.innerHTML = `
-    <div class="grid">
-      <div class="card"><div class="muted">净资产 · ${summary.monthKey}</div><div class="metric">${money(summary.netWorth, state.currency)}</div></div>
-      <div class="card"><div class="muted">本月收入</div><div class="metric">${money(summary.monthIncome, state.currency)}</div></div>
-      <div class="card"><div class="muted">本月支出</div><div class="metric">${money(summary.monthExpense, state.currency)}</div></div>
-      <div class="card"><div class="muted">本月攒下</div><div class="metric">${money(summary.deposited, state.currency)}</div><div class="muted">连续 ${summary.streak} 天</div></div>
-    </div>
-    <div class="card"><h2>这个月</h2><div class="days">${days}</div></div>
-    <div class="card"><h2>账户</h2>${(state.accounts||[]).map(row => `<div>${row.name} · ${money(row.balance, row.currency)}${row.archived?" · 已归档":""}</div>`).join("") || "<div class='muted'>还没有账户</div>"}</div>`;
-}
-function renderLedger() {
-  const root = document.getElementById("ledger");
-  if (state.status !== "ready") { root.innerHTML = ""; return; }
-  const expenseCats = (state.categories||[]).filter(row => row.kind==="expense");
-  const incomeCats = (state.categories||[]).filter(row => row.kind==="income");
-  root.innerHTML = `
-    <div class="card"><h2>记一笔</h2>
-      <div class="row">
-        <label>方向<select id="entry-kind"><option value="expense">支出</option><option value="income">收入</option><option value="transfer">转账</option></select></label>
-        <label>金额<input id="entry-amount" inputmode="decimal"></label>
-        <label>账户<select id="entry-account">${options(accounts(), "", row => row.name)}</select></label>
-        <label>转入账户<select id="entry-target">${options(accounts(), "", row => row.name)}</select></label>
-        <label>转入金额<input id="entry-target-amount" placeholder="跨币种才填"></label>
-        <label>分类<select id="entry-category">${options(expenseCats, expenseCats[0] && expenseCats[0].id, row => row.name)}</select></label>
-        <label>日期<input id="entry-date" placeholder="2026-11-15 或留空"></label>
-        <label>备注<input id="entry-note"></label>
-        <button id="entry-save">保存</button>
+  <header class="app-chrome">
+    <div class="topbar">
+      <div class="brand">
+        <img src="/assets/mac/GaoJiXuIcon.png" width="38" height="38" alt="">
+        <div><strong id="brand-name">搞积蓄</strong><small id="brand-tagline">我的财务工作台</small></div>
       </div>
+      <nav id="workspaces" class="workspaces" aria-label="工作台"></nav>
+      <div class="toolbar" id="toolbar"></div>
     </div>
-    <div class="card"><h2>账户</h2>
-      <div class="row">
-        <label>名称<input id="account-name"></label>
-        <label>类型<select id="account-type">${options(state.accountTypes, "cash", row => row.name)}</select></label>
-        <label>币种<select id="account-currency">${options(state.currencies, state.currency, row => row.name)}</select></label>
-        <label>余额<input id="account-balance" value="0"></label>
-        <button id="account-save">保存账户</button>
-      </div>
-      <table><tr><th>名称</th><th>余额</th><th></th></tr>
-      ${(state.accounts||[]).map(row => `<tr><td>${row.name}${row.archived?"（归档）":""}</td><td>${money(row.balance, row.currency)}</td><td>${row.archived?"":`<button class="ghost" data-archive="${row.id}">归档或删除</button>`}</td></tr>`).join("")}
-      </table>
-    </div>
-    <div class="card"><h2>预算</h2>
-      <div class="row">
-        <label>月份<input id="budget-month" value="${state.summary.monthKey}"></label>
-        <label>分类<select id="budget-category">${options(expenseCats, "", row => row.name)}</select></label>
-        <label>金额<input id="budget-amount"></label>
-        <button id="budget-save">保存预算</button>
-      </div>
-      ${(state.budgets||[]).map(row => `<div>${row.monthKey} · ${row.categoryID} · 预算 ${row.amount} / 已花 ${row.spent}</div>`).join("")}
-    </div>
-    <div class="card"><h2>周期记账</h2>
-      <div class="row">
-        <label>方向<select id="rule-kind"><option value="expense">支出</option><option value="income">收入</option></select></label>
-        <label>金额<input id="rule-amount"></label>
-        <label>账户<select id="rule-account">${options(accounts(), "", row => row.name)}</select></label>
-        <label>分类<select id="rule-category">${options(expenseCats, "", row => row.name)}</select></label>
-        <label>周期<select id="rule-frequency"><option value="monthly">每月</option><option value="weekly">每周</option><option value="daily">每天</option><option value="yearly">每年</option></select></label>
-        <label>下次<input id="rule-due" placeholder="2026-11-15"></label>
-        <label>备注<input id="rule-note"></label>
-        <button id="rule-save">保存规则</button>
-      </div>
-      ${(state.recurring||[]).map(row => `<div>${row.kind} ${row.amount} · 下次 ${row.nextDue} <button class="ghost" data-rule="${row.id}">${row.isEnabled?"停用":"启用"}</button></div>`).join("")}
-    </div>
-    <div class="card"><h2>固定收入</h2>
-      <div class="row">
-        <label>名称<input id="income-name"></label>
-        <label>金额<input id="income-amount"></label>
-        <label>每月几日<input id="income-day" value="10"></label>
-        <label>起始月<input id="income-start" value="${state.summary.monthKey}"></label>
-        <button id="income-save">保存计划</button>
-      </div>
-      ${(state.fixedIncome.plans||[]).map(plan => `<div>${plan.name} · ${plan.amount} ${plan.currency} · ${plan.dayOfMonth} 日
-        <button data-confirm="${plan.id}">确认本月到账</button></div>`).join("")}
-    </div>
-    <div class="card"><h2>固定支出与权益</h2>
-      <p class="muted">${state.monthly.notice || (state.monthly.status === "ready" ? "可以记账" : "")}</p>
-      ${state.monthly.status === "missing" ? `<button id="monthly-create">创建固定支出库</button>` : ""}
-      <div class="row">
-        <label>订阅<input id="sub-name"></label>
-        <label>金额<input id="sub-price"></label>
-        <label>币种<select id="sub-currency">${options(state.currencies.filter(row => ["CNY","USD","EUR","HKD","JPY","GBP"].includes(row.id)), "CNY", row => row.id)}</select></label>
-        <button id="sub-save">添加订阅</button>
-      </div>
-      ${(state.monthly.subscriptions||[]).map(row => `<div>${row.name} · ${row.price} ${row.currency}
-        <button data-pay="${row.id}" data-currency="${row.currency}">确认支付并记入账本</button></div>`).join("")}
-      <div class="row">
-        <label>权益<input id="benefit-name"></label>
-        <label>周期<select id="benefit-kind"><option value="daily">每日</option><option value="weekly">每周</option></select></label>
-        <button id="benefit-save">添加权益</button>
-      </div>
-      ${(state.monthly.benefits||[]).map(row => `<div>${row.name} · ${row.kind === "daily"?"每日":"每周"} ${row.claimed?"已打卡":""}
-        <button data-claim="${row.id}">打卡</button></div>`).join("")}
-    </div>
-    <div class="card"><h2>流水</h2>
-      <p><a href="/api/export/ledger.csv" id="export">导出 CSV</a></p>
-      <table><tr><th>日期</th><th>类型</th><th>账户</th><th>分类</th><th>备注</th><th>金额</th><th></th></tr>
-      ${(state.entries||[]).map(row => `<tr><td>${row.date}</td><td>${row.kind}</td><td>${row.accountName}</td><td>${row.categoryName}</td><td>${row.note}</td><td>${money(row.amount, row.currency)}</td><td>${row.balanceAdjustment || row.savings ? "" : `<button class="ghost" data-delete-entry="${row.id}">删除</button>`}</td></tr>`).join("")}
-      </table>
-    </div>`;
-  const kind = document.getElementById("entry-kind");
-  kind.onchange = () => {
-    const cats = (state.categories||[]).filter(row => row.kind === (kind.value === "transfer" ? "transfer" : kind.value));
-    document.getElementById("entry-category").innerHTML = options(cats, "", row => row.name);
-  };
-  document.getElementById("entry-save").onclick = () => api("/api/ledger/save", {
-    kind: kind.value, amount: document.getElementById("entry-amount").value,
-    accountID: document.getElementById("entry-account").value,
-    targetAccountID: document.getElementById("entry-target").value,
-    targetAmount: document.getElementById("entry-target-amount").value,
-    categoryID: document.getElementById("entry-category").value,
-    date: document.getElementById("entry-date").value, note: document.getElementById("entry-note").value
-  }).catch(showError);
-  document.getElementById("account-save").onclick = () => api("/api/accounts/save", {
-    name: document.getElementById("account-name").value, type: document.getElementById("account-type").value,
-    currency: document.getElementById("account-currency").value, balance: document.getElementById("account-balance").value,
-    includeInNetWorth: true
-  }).catch(showError);
-  root.querySelectorAll("[data-archive]").forEach(button => button.onclick = () => api("/api/accounts/delete", {id: button.dataset.archive}).catch(showError));
-  document.getElementById("budget-save").onclick = () => api("/api/budgets/save", {
-    monthKey: document.getElementById("budget-month").value, categoryID: document.getElementById("budget-category").value,
-    currency: state.currency, amount: document.getElementById("budget-amount").value
-  }).catch(showError);
-  document.getElementById("rule-save").onclick = () => api("/api/recurring/save", {
-    kind: document.getElementById("rule-kind").value, amount: document.getElementById("rule-amount").value,
-    accountID: document.getElementById("rule-account").value, categoryID: document.getElementById("rule-category").value,
-    frequency: document.getElementById("rule-frequency").value, nextDueDate: document.getElementById("rule-due").value,
-    note: document.getElementById("rule-note").value, isEnabled: true
-  }).catch(showError);
-  root.querySelectorAll("[data-rule]").forEach(button => button.onclick = () => api("/api/recurring/toggle", {id: button.dataset.rule}).catch(showError));
-  document.getElementById("income-save").onclick = () => api("/api/fixed-income/save", {
-    name: document.getElementById("income-name").value, amount: document.getElementById("income-amount").value,
-    dayOfMonth: Number(document.getElementById("income-day").value), startMonth: document.getElementById("income-start").value,
-    currency: state.currency, category: "salary-income", isEnabled: true
-  }).catch(showError);
-  root.querySelectorAll("[data-confirm]").forEach(button => button.onclick = () => {
-    const accountID = accounts().find(row => row.currency === state.currency);
-    api("/api/fixed-income/confirm", {planID: button.dataset.confirm, month: state.summary.monthKey, accountID: accountID && accountID.id, receivedIsConfirmed: true}).catch(showError);
-  });
-  const monthlyCreate = document.getElementById("monthly-create");
-  if (monthlyCreate) monthlyCreate.onclick = () => api("/api/monthly/create", {}).catch(showError);
-  document.getElementById("sub-save").onclick = () => api("/api/monthly/subscription", {
-    name: document.getElementById("sub-name").value, price: document.getElementById("sub-price").value,
-    currency: document.getElementById("sub-currency").value, cycle: "monthly", interval: 1
-  }).catch(showError);
-  root.querySelectorAll("[data-pay]").forEach(button => button.onclick = () => {
-    const accountID = accounts().find(row => row.currency === button.dataset.currency);
-    api("/api/monthly/pay", {subscriptionID: button.dataset.pay, accountID: accountID && accountID.id}).catch(showError);
-  });
-  document.getElementById("benefit-save").onclick = () => api("/api/monthly/benefit", {
-    name: document.getElementById("benefit-name").value, kind: document.getElementById("benefit-kind").value
-  }).catch(showError);
-  root.querySelectorAll("[data-claim]").forEach(button => button.onclick = () => api("/api/monthly/claim", {id: button.dataset.claim}).catch(showError));
-  root.querySelectorAll("[data-delete-entry]").forEach(button => button.onclick = () => api("/api/ledger/delete", {id: button.dataset.deleteEntry}).catch(showError));
-  document.getElementById("export").addEventListener("click", async (event) => {
-    event.preventDefault();
-    const response = await fetch("/api/export/ledger.csv", {headers});
-    const blob = await response.blob();
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = "ledger.csv";
-    link.click();
-  });
-}
-function renderGoals() {
-  const root = document.getElementById("goals");
-  if (state.status !== "ready") { root.innerHTML = ""; return; }
-  root.innerHTML = `
-    <div class="card"><h2>攒钱目标</h2>
-      <div class="row">
-        <label>名称<input id="goal-title"></label>
-        <label>目标金额<input id="goal-target"></label>
-        <label>截止日期<input id="goal-deadline" placeholder="2027-05-01"></label>
-        <button id="goal-save">保存目标</button>
-      </div>
-      ${(state.goals||[]).map(goal => `<div><strong>${goal.title}</strong> ${money(goal.balance, goal.currency)} / ${money(goal.targetAmount, goal.currency)} · ${goal.status}
-        <div class="bar"><span style="width:${Math.round(goal.progress*100)}%"></span></div></div>`).join("")}
-    </div>
-    <div class="card"><h2>分配到目标</h2>
-      <div class="row">
-        <label>目标<select id="record-goal">${options(state.goals||[], "", row => row.title)}</select></label>
-        <label>方向<select id="record-kind"><option value="deposit">存入</option><option value="withdrawal">取出</option></select></label>
-        <label>金额<input id="record-amount"></label>
-        <label>资金账户<select id="record-funding">${options(accounts(), "", row => row.name)}</select></label>
-        <label>存钱罐<select id="record-savings">${options(accounts(), "", row => row.name)}</select></label>
-        <label>分类<select id="record-category">
-          <option value="salary">工资结余</option><option value="savedExpense">少花一笔</option><option value="extraIncome">额外收入</option>
-          <option value="scheduled">固定储蓄</option><option value="gift">红包礼金</option><option value="other">其他</option>
-        </select></label>
-        <label>备注<input id="record-note"></label>
-        <button id="record-save">保存记录</button>
-      </div>
-      <table>${(state.records||[]).map(row => `<tr><td>${row.date}</td><td>${row.goalTitle}</td><td>${row.kind==="deposit"?"存入":"取出"}</td><td>${money(row.amount, row.currency)}</td><td><button class="ghost" data-delete-record="${row.id}">删除</button></td></tr>`).join("")}</table>
-    </div>`;
-  document.getElementById("goal-save").onclick = () => api("/api/goals/save", {
-    title: document.getElementById("goal-title").value, targetAmount: document.getElementById("goal-target").value,
-    deadline: document.getElementById("goal-deadline").value, currency: state.currency, startingAmount: 0
-  }).catch(showError);
-  document.getElementById("record-save").onclick = () => api("/api/records/save", {
-    goalID: document.getElementById("record-goal").value, kind: document.getElementById("record-kind").value,
-    amount: document.getElementById("record-amount").value, fundingAccountID: document.getElementById("record-funding").value,
-    savingsAccountID: document.getElementById("record-savings").value, category: document.getElementById("record-category").value,
-    note: document.getElementById("record-note").value
-  }).catch(showError);
-  root.querySelectorAll("[data-delete-record]").forEach(button => button.onclick = () => api("/api/records/delete", {id: button.dataset.deleteRecord}).catch(showError));
-}
-function renderAdventure() {
-  const root = document.getElementById("adventure");
-  if (state.status !== "ready") { root.innerHTML = ""; return; }
-  const game = state.adventure;
-  root.innerHTML = `
-    <div class="grid">
-      <div class="card"><div class="muted">第 ${game.stage} 关 · ${game.monster}</div><div class="metric">${game.monsterHP} / ${game.monsterMaxHP}</div><div class="muted">${game.monsterChapter}</div></div>
-      <div class="card"><div class="muted">${game.level} 级 · 生命</div><div class="metric">${game.heroHP ?? game.heroMaxHP} / ${game.heroMaxHP}</div><div class="muted">战力 ${game.power} · 攻 ${game.attack} 防 ${game.defense}</div></div>
-      <div class="card"><div class="muted">金币 / 星券</div><div class="metric">${game && state.summary.coins} / ${state.summary.tickets}</div><div class="muted">星尘 ${state.summary.stardust} · 悟性 ${state.summary.insight}</div></div>
-    </div>
-    <div class="card"><h2>战斗</h2><p>${game.message || "自动战斗进行中。关掉浏览器标签后，进程仍会每秒结算；点退出才停止。"}</p>
-      <button id="tick-once">攻击一次</button> <button id="tick-ten">连打 10 次</button>
-      <button id="draw-one">装备单抽</button> <button id="draw-ten">装备十连</button> <button id="exchange">500 金币换 1 星券</button>
-      <button id="hatch">孵化宠物（10000 金币）</button> <button id="equip-best">一键装备</button>
-    </div>
-    <div class="card"><h2>已有装备</h2>
-      ${(game.gear||[]).map(row => `<div>${row.name} +${row.enhancement||0} ×${row.count}
-        <button data-equip="${row.id}">装备</button> <button data-enhance="${row.id}">强化</button></div>`).join("") || "<div class='muted'>新手装在身上</div>"}
-    </div>
-    <div class="card"><h2>技能与宠物</h2>
-      ${(game.techniques||[]).map(row => `<div>${row.name} ${row.level} 重 <button data-tech="${row.id}">装配</button> <button data-upgrade="${row.id}">参悟</button></div>`).join("")}
-      ${(game.pets||[]).map(row => `<div>${row.name} ${row.stars} 星 <button data-pet="${row.id}">上阵</button></div>`).join("")}
-      <p class="muted">保底：稀有 ${game.pity.equipment.rare}/9，史诗 ${game.pity.equipment.epic}/29</p>
-    </div>`;
-  document.getElementById("tick-once").onclick = () => api("/api/adventure/tick", {count:1}).catch(showError);
-  document.getElementById("tick-ten").onclick = () => api("/api/adventure/tick", {count:10}).catch(showError);
-  document.getElementById("draw-one").onclick = () => api("/api/adventure/draw", {count:1, pool:"equipment"}).catch(showError);
-  document.getElementById("draw-ten").onclick = () => api("/api/adventure/draw", {count:10, pool:"equipment"}).catch(showError);
-  document.getElementById("exchange").onclick = () => api("/api/adventure/exchange", {}).catch(showError);
-  document.getElementById("hatch").onclick = () => api("/api/adventure/hatch", {}).catch(showError);
-  document.getElementById("equip-best").onclick = () => api("/api/adventure/equip-best", {}).catch(showError);
-  root.querySelectorAll("[data-equip]").forEach(button => button.onclick = () => api("/api/adventure/equip", {id: button.dataset.equip}).catch(showError));
-  root.querySelectorAll("[data-enhance]").forEach(button => button.onclick = () => api("/api/adventure/enhance", {id: button.dataset.enhance}).catch(showError));
-  root.querySelectorAll("[data-tech]").forEach(button => button.onclick = () => api("/api/adventure/technique", {id: button.dataset.tech}).catch(showError));
-  root.querySelectorAll("[data-upgrade]").forEach(button => button.onclick = () => api("/api/adventure/upgrade-technique", {id: button.dataset.upgrade}).catch(showError));
-  root.querySelectorAll("[data-pet]").forEach(button => button.onclick = () => api("/api/adventure/pet", {id: button.dataset.pet}).catch(showError));
-}
-function renderSettings() {
-  const root = document.getElementById("settings");
-  root.innerHTML = `
-    <div class="card"><h2>外观与币种</h2>
-      <div class="row">
-        <label>外观<select id="set-appearance"><option value="light">浅色</option><option value="dark">深色</option></select></label>
-        <label>语言<select id="set-language"><option value="zh">中文</option><option value="en">English</option></select></label>
-        <label>默认币种<select id="set-currency">${options(state.currencies||[], state.currency, row => row.name)}</select></label>
-        <button id="set-save">保存</button>
-      </div>
-      <p class="muted">页面正文以中文为主。默认币种只影响总览和小组件快照，不改已有账户。</p>
-    </div>`;
-  if (state.settings) {
-    document.getElementById("set-appearance").value = state.settings.appearance || "light";
-    document.getElementById("set-language").value = state.settings.language || "zh";
-  }
-  document.getElementById("set-save").onclick = () => api("/api/settings", {
-    appearance: document.getElementById("set-appearance").value,
-    language: document.getElementById("set-language").value,
-    currency: document.getElementById("set-currency").value
-  }).catch(showError);
-}
-document.querySelectorAll("nav button").forEach(button => button.onclick = () => {
-  document.querySelectorAll("nav button").forEach(item => item.classList.remove("active"));
-  button.classList.add("active");
-  ["overview","ledger","goals","adventure","settings"].forEach(id => {
-    document.getElementById(id).classList.toggle("hidden", id !== button.dataset.tab);
-  });
-});
-document.getElementById("quit").onclick = async () => {
-  await fetch("/api/shutdown", {method:"POST", headers, body:"{}"});
-  document.body.innerHTML = "<main><div class='card'><h2>已退出</h2><p>可以关掉这个标签。</p></div></main>";
-};
-refresh().catch(showError);
-setInterval(() => { if (state && state.status === "ready" && !document.getElementById("adventure").classList.contains("hidden")) refresh().catch(()=>{}); }, 2000);
-</script>
+    <div class="subbar" id="subbar" hidden><nav id="sections" class="segmented" aria-label="工作区内容"></nav></div>
+    <div class="subbar fixed-bar" id="fixed-bar" hidden><nav id="fixed-sections" class="segmented" aria-label="固定收支类型"></nav></div>
+  </header>
+  <main id="workbench">
+    <div id="banner" class="banner" role="status" hidden></div>
+    <section id="overview" hidden></section>
+    <section id="ledger" hidden></section>
+    <section id="accounts" hidden></section>
+    <section id="budgets" hidden></section>
+    <section id="reports" hidden></section>
+    <section id="fixed-income" hidden></section>
+    <section id="fixed-expenses" hidden></section>
+    <section id="benefits" hidden></section>
+    <section id="goals" hidden></section>
+    <section id="records" hidden></section>
+    <section id="analytics" hidden></section>
+    <section id="adventure" hidden></section>
+    <section id="widgets" hidden></section>
+  </main>
+  <dialog id="editor" aria-labelledby="editor-title">
+    <form id="editor-form">
+      <div class="editor-header"><h2 id="editor-title"></h2><p id="editor-subtitle"></p></div>
+      <div id="editor-content" class="editor-content"></div>
+      <div id="editor-error" role="alert" hidden></div>
+      <div class="editor-actions"><button id="editor-cancel" class="ghost" type="button"></button><button id="editor-submit" type="submit"></button></div>
+    </form>
+  </dialog>
 </body>
 </html>

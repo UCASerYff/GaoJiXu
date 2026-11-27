@@ -386,21 +386,38 @@ def delete_entry(store, entry_id: str) -> None:
 
 
 def save_budget(store, payload: dict) -> None:
+    save_budgets(store, {**payload, "amounts": {payload.get("categoryID"): payload.get("amount")}})
+
+
+def save_budgets(store, payload: dict) -> None:
     store.require_ready()
     key = payload.get("monthKey") or month_key(store.now(), store.tz)
     if parse_month_key(key) is None:
         raise AppError("请选择有效月份。", "invalid")
-    category_id = payload.get("categoryID")
-    if category_id not in catalog.CATEGORY_BY_ID or catalog.CATEGORY_BY_ID[category_id][2] != "expense":
-        raise AppError("预算只对应支出分类。", "invalid")
     currency = payload.get("currency") or store.currency
     if currency not in catalog.CURRENCIES:
         raise AppError("币种无法识别。", "invalid")
-    amount = money(payload.get("amount"))
-    budget_id = f"{key}-{currency}-{category_id}"
-    rows = [row for row in budgets(store) if row.get("id") != budget_id]
-    if amount > 0:
-        rows.append({"id": budget_id, "monthKey": key, "categoryID": category_id, "currency": currency, "amount": money_number(amount)})
+    amounts = payload.get("amounts")
+    if not isinstance(amounts, dict):
+        raise AppError("请填写分类预算。", "invalid")
+    changed = {}
+    for category_id, value in amounts.items():
+        if category_id not in catalog.CATEGORY_BY_ID or catalog.CATEGORY_BY_ID[category_id][2] != "expense":
+            raise AppError("预算只对应支出分类。", "invalid")
+        changed[category_id] = money(value)
+    rows = []
+    written = set()
+    for row in budgets(store):
+        category_id = row.get("categoryID")
+        if row.get("monthKey") != key or row.get("currency") != currency or category_id not in changed:
+            rows.append(row)
+        elif changed[category_id] > 0 and category_id not in written:
+            rows.append({**row, "amount": money_number(changed[category_id])})
+            written.add(category_id)
+    for category_id, amount in changed.items():
+        if category_id not in written and amount > 0:
+            rows.append({"id": f"{key}-{currency}-{category_id}", "monthKey": key, "categoryID": category_id,
+                         "currency": currency, "amount": money_number(amount)})
     store.doc["budgets"] = rows
     store.mark_financial()
     store.save()
@@ -703,7 +720,8 @@ def save_record(store, payload: dict) -> dict:
             catalog.CURRENCIES[goal["currency"]][1],
         )
     else:
-        _refresh_goal(store, goal)
+        for candidate in goals(store):
+            _refresh_goal(store, candidate)
         if existing is None:
             adventure.add_event(store, "调整目标分配", f"从“{goal['title']}”撤回 {catalog.CURRENCIES[goal['currency']][1]}{money_number(amount):g}。", "arrow.up.circle.fill")
     store.mark_financial()

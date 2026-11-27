@@ -11,3 +11,10 @@ def asset_dir() -> Path:
     if frozen:
         return Path(frozen) / "gaojixu_assets"
     return Path(__file__).resolve().parent / "assets"
+
+
+def mac_asset_dir() -> Path:
+    frozen = getattr(sys, "_MEIPASS", None)
+    if frozen:
+        return Path(frozen) / "gaojixu_mac_assets"
+    return Path(__file__).resolve().parents[3] / "Resources"
