@@ -59,6 +59,8 @@ class WidgetWindows:
         self._get_placement = bind(user, "GetWindowPlacement", win.BOOL, win.HWND, ctypes.POINTER(_WindowPlacement))
         self._set_placement = bind(user, "SetWindowPlacement", win.BOOL, win.HWND, ctypes.POINTER(_WindowPlacement))
         self._show = bind(user, "ShowWindowAsync", win.BOOL, win.HWND, ctypes.c_int)
+        self._iconic = bind(user, "IsIconic", win.BOOL, win.HWND)
+        self._visible = bind(user, "IsWindowVisible", win.BOOL, win.HWND)
         self._foreground = bind(user, "SetForegroundWindow", win.BOOL, win.HWND)
         self._post = bind(user, "PostMessageW", win.BOOL, win.HWND, win.UINT, win.WPARAM, win.LPARAM)
         self._dpi = bind(user, "SetThreadDpiAwarenessContext", win.HANDLE, win.HANDLE)
@@ -104,6 +106,9 @@ class WidgetWindows:
     def belongs(self, hwnd, lease):
         return self._identity(hwnd, f"GaoJiXuWidget.{lease}") == 1
 
+    def visible(self, hwnd):
+        return bool(self._visible(hwnd))
+
     def topmost(self, hwnd):
         return bool(self._get_style(hwnd, -20) & 0x8)  # GWL_EXSTYLE / WS_EX_TOPMOST
 
@@ -146,7 +151,8 @@ class WidgetWindows:
                 self._dpi(previous)
 
     def activate(self, hwnd):
-        self._show(hwnd, 9)  # SW_RESTORE
+        if self._iconic(hwnd):
+            self._show(hwnd, 9)  # SW_RESTORE
         self._foreground(hwnd)
 
     def close(self, hwnd):
@@ -170,12 +176,13 @@ def _valid_rect(value):
 
 
 class DesktopWidgets:
-    def __init__(self, url, base, executable, windows, *, launch=subprocess.Popen):
+    def __init__(self, url, base, executable, windows, *, launch=subprocess.Popen, browser_profile=None):
         self.url = url
         self.base = Path(base)
         self.executable = os.path.normcase(str(Path(executable).resolve()))
         self.native = windows
         self._launch = launch
+        self._browser_profile = browser_profile or self.base / "Chromium"
         self._lock = threading.RLock()
         self._stopping = threading.Event()
         self._worker = None
@@ -281,6 +288,8 @@ class DesktopWidgets:
         if kind not in TYPES or self._stopping.is_set():
             raise AppError("无法打开此小组件。", "desktop-widget")
         with self._lock:
+            if self._stopping.is_set():
+                raise AppError("无法打开此小组件。", "desktop-widget")
             self._samples()
             window = self._active.get(kind)
             if window is not None:
@@ -290,7 +299,7 @@ class DesktopWidgets:
             lease = secrets.token_hex(16)
             width, height = TYPES[kind][0]
             options = [
-                self.executable, f"--user-data-dir={self.base / 'Chromium'}", "--no-first-run",
+                self.executable, f"--user-data-dir={self._browser_profile}", "--no-first-run",
                 "--no-default-browser-check", "--disable-background-mode", f"--window-size={width},{height}",
                 "--app=" + self.url + "?" + urlencode({"widget": kind, "desktop": lease}),
             ]

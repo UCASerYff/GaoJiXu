@@ -196,8 +196,8 @@ dialog form { display:flex; flex-direction:column; max-height:calc(100dvh - 32px
 .editor-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; padding:10px 19px; border-top:1px solid var(--line); background:var(--panel); }
 .editor-actions button { min-width:74px; }
 #editor-error,.dialog-notice { color:var(--danger); padding:7px 12px; margin:0 19px 9px; background:color-mix(in srgb,var(--danger) 10%,var(--panel)); border-left:3px solid var(--danger); border-radius:4px; overflow-wrap:anywhere; }
-#decision { --editor-width:440px; }
-#decision-content { overflow-wrap:anywhere; }
+#decision,#app-exit { --editor-width:440px; }
+#decision-content,#app-exit-text { overflow-wrap:anywhere; }
 .settings-layout { display:grid; grid-template-columns:132px minmax(0,1fr); gap:14px; align-items:start; }
 .settings-tabs { display:grid; gap:4px; }
 .settings-tabs button { text-align:left; min-height:37px; }

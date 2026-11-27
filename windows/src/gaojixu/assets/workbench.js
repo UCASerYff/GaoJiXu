@@ -12,7 +12,15 @@ const sections = {
   "fixed-income": ["固定收支", "Recurring"], goals: ["攒钱目标", "Goals"], records: ["积蓄记录", "Records"], analytics: ["趋势", "Analytics"]
 };
 const fixedRoutes = [["fixed-income", "固定收入", "Income"], ["fixed-expenses", "固定支出", "Expenses"], ["benefits", "权益", "Benefits"]];
-const gallery = new URLSearchParams(location.search).get("widget");
+const query = new URLSearchParams(location.search);
+const gallery = query.get("widget");
+const lease = /^[a-f0-9]{32}$/.test(query.get("workbench") ?? "") ? query.get("workbench") : "";
+const desktopMarker = lease ? " [GJX:" + lease + "]" : "";
+let desktopAttached = false;
+let desktopRoute = "";
+let editorDirty = false;
+let quitPending = false;
+if (lease) document.title += desktopMarker;
 let state = null;
 let route = gallery ? "widgets" : routeFromHash();
 let viewRevision = 0;
@@ -178,6 +186,58 @@ function confirmAction(message, {title, label, destructive = true} = {}) {
     dialog.showModal();
   });
 }
+function preventDraftLoss(event) {
+  event.preventDefault();
+  event.returnValue = "";
+}
+function markEditorDirty(dirty) {
+  if (editorDirty === dirty) return;
+  editorDirty = dirty;
+  if (dirty) window.addEventListener("beforeunload", preventDraftLoss);
+  else window.removeEventListener("beforeunload", preventDraftLoss);
+}
+function requestQuit() {
+  const dialog = document.getElementById("app-exit");
+  if (dialog.open || quitPending) return;
+  quitPending = true;
+  function showWhenReady() {
+    if (pendingMutation || document.getElementById("editor-form").hasAttribute("aria-busy")) {
+      setTimeout(showWhenReady, 100);
+      return;
+    }
+    quitPending = false;
+    document.getElementById("app-exit-title").textContent = t("退出搞积蓄？", "Quit Gao Savings?");
+    document.getElementById("app-exit-text").textContent = editorDirty
+      ? t("当前编辑尚未保存。可返回编辑保存，或放弃本次修改并退出。",
+          "The current edit is unsaved. Return to save it, or discard it and quit.")
+      : t("退出将关闭工作台和桌面小组件，并停止后台服务。", "Quitting closes the workbench and widgets and stops the background service.");
+    dialog.querySelector("[data-exit-cancel]").textContent = editorDirty ? t("返回编辑", "Return to edit") : t("取消", "Cancel");
+    dialog.querySelector("[data-exit-confirm]").textContent = editorDirty ? t("放弃并退出", "Discard and quit") : t("退出", "Quit");
+    dialog.returnValue = "";
+    dialog.showModal();
+  }
+  showWhenReady();
+}
+async function pollDesktop() {
+  if (document.body.dataset.session === "closed") return;
+  try {
+    const event = await get("/api/desktop/events?lease=" + lease);
+    if (event.attached && !desktopAttached) {
+      desktopAttached = true;
+      document.title = document.title.replace(desktopMarker, "");
+    }
+    if (event.route) desktopRoute = event.route;
+    if (event.quit) requestQuit();
+    if (desktopRoute && !document.querySelector("dialog[open]") && !pendingMutation && !quitPending) {
+      navigate(desktopRoute);
+      desktopRoute = "";
+    }
+  } catch {
+    // The controlled window closes with the service on exit.
+  } finally {
+    setTimeout(pollDesktop, 650);
+  }
+}
 function navButton(id, title, current, symbol) {
   return '<button type="button" data-route="' + id + '" class="' + (current ? "active" : "") + '"' + (current ? ' aria-current="page"' : "") + ">" +
     (symbol ? icon(symbol) : "") + escapeHTML(title) + "</button>";
@@ -195,7 +255,8 @@ function render() {
   if (/^#[\dA-Fa-f]{6}$/.test(tint)) root.style.setProperty("--user-tint", tint);
   else root.style.removeProperty("--user-tint");
   const appName = t("搞积蓄", "Gao Savings");
-  document.title = window.GaoWidgets?.windowTitle(appName) || appName + " V" + version.split("+")[0];
+  document.title = window.GaoWidgets?.windowTitle(appName) ||
+    appName + " V" + version.split("+")[0] + (desktopAttached ? "" : desktopMarker);
   document.getElementById("brand-name").textContent = appName;
   document.getElementById("context-workspace").textContent = route === "widgets" ? t("小组件", "Widgets") : t(workspace[1],workspace[2]);
   const context = document.getElementById("context-section");
@@ -257,6 +318,7 @@ function renderToolbar(ready) {
 }
 function openEditor({title, subtitle = "", body, submitLabel, onSubmit, onOpen, width}) {
   const dialog = document.getElementById("editor");
+  markEditorDirty(false);
   if (width) dialog.style.setProperty("--editor-width", typeof width === "number" ? width + "px" : width);
   else dialog.style.removeProperty("--editor-width");
   const form = document.getElementById("editor-form");
@@ -304,6 +366,7 @@ function openEditor({title, subtitle = "", body, submitLabel, onSubmit, onOpen, 
   return form;
 }
 function closeEditor() {
+  markEditorDirty(false);
   document.getElementById("editor").close();
 }
 function openSettings() {
@@ -411,12 +474,7 @@ document.addEventListener("click", event => {
     widgets: () => navigate("widgets"),
     settings: openSettings,
     retry: loadWorkbench,
-    async quit() {
-      await api("/api/shutdown");
-      document.getElementById("workbench").textContent = t("搞积蓄已退出。","Gao Savings has closed.");
-      document.querySelector(".app-chrome").hidden = true;
-      document.body.dataset.session = "closed";
-    }
+    quit: requestQuit
   };
   Promise.resolve().then(actions[command.dataset.workbench]).catch(showError);
 });
@@ -451,8 +509,28 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("editor-cancel").onclick = closeEditor;
   document.getElementById("editor-close").onclick = closeEditor;
   document.getElementById("feedback-dismiss").onclick = () => { document.getElementById("feedback").hidden = true; };
-  document.getElementById("editor").addEventListener("close", () => { settingsFocus = false; });
+  document.getElementById("editor").addEventListener("close", () => { settingsFocus = false; markEditorDirty(false); });
+  const editor = document.getElementById("editor-form");
+  for (const type of ["input", "change"]) {
+    editor.addEventListener(type, () => {
+      if (!document.getElementById("editor-submit").hidden) markEditorDirty(true);
+    });
+  }
+  const exit = document.getElementById("app-exit");
+  exit.addEventListener("close", async () => {
+    if (exit.returnValue !== "confirm") return;
+    try {
+      await api("/api/shutdown");
+      markEditorDirty(false);
+      document.getElementById("workbench").textContent = t("搞积蓄已退出。","Gao Savings has closed.");
+      document.querySelector(".app-chrome").hidden = true;
+      document.body.dataset.session = "closed";
+    } catch (error) {
+      showError(error);
+    }
+  });
   loadWorkbench();
+  if (lease) pollDesktop();
   if (gallery) document.getElementById("toolbar").hidden = true;
   setInterval(() => {
     if (!document.hidden && state?.status === "ready" && !pendingMutation && !liveRefresh &&

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import ctypes
+import locale
 import logging
 import os
 import queue
 import sys
 import threading
+import time
 from ctypes import wintypes as win
 from typing import Callable
 
@@ -21,7 +23,7 @@ _WM_CLOSE = 0x0010
 _WM_DESTROY = 0x0002
 _WM_CONTEXTMENU = 0x007B
 _WM_TIMER = 0x0113
-_WM_LBUTTONDBLCLK = 0x0203
+_WM_LBUTTONUP = 0x0202
 _WM_RBUTTONUP = 0x0205
 _WM_TRAY = 0x8001
 _WM_NOTICE = 0x8002
@@ -35,6 +37,11 @@ _NIM_ADD, _NIM_MODIFY, _NIM_DELETE, _NIM_SETFOCUS, _NIM_SETVERSION = range(5)
 _NIF_MESSAGE, _NIF_ICON, _NIF_TIP, _NIF_INFO, _NIF_SHOWTIP = 0x01, 0x02, 0x04, 0x10, 0x80
 _NIIF_INFO, _NIIF_RESPECT_QUIET_TIME = 0x01, 0x80
 _TPM_RIGHTBUTTON, _TPM_NONOTIFY, _TPM_RETURNCMD = 0x02, 0x80, 0x100
+_ICON_ID = 1
+_TRAY_TIMER = 1
+_SM_CXSMICON, _SM_CYSMICON = 49, 50
+_IMAGE_ICON, _LR_LOADFROMFILE = 1, 0x10
+_CLICK_INTERVAL = .25
 
 
 class _WindowClass(ctypes.Structure):
@@ -53,6 +60,13 @@ class _NotifyIconData(ctypes.Structure):
         ("tip", win.WCHAR * 128), ("state", win.DWORD), ("state_mask", win.DWORD),
         ("body", win.WCHAR * 256), ("version", win.UINT), ("title", win.WCHAR * 64),
         ("info_flags", win.DWORD), ("guid", ctypes.c_byte * 16), ("balloon_icon", win.HICON),
+    ]
+
+
+class _NotifyIconIdentifier(ctypes.Structure):
+    _fields_ = [
+        ("size", win.DWORD), ("window", win.HWND), ("identifier", win.UINT),
+        ("guid", ctypes.c_byte * 16),
     ]
 
 
@@ -82,17 +96,27 @@ class _Windows:
         self.dispatch_message = _api(user, "DispatchMessageW", win.LPARAM, ctypes.POINTER(win.MSG))
         self.post_quit = _api(user, "PostQuitMessage", None, ctypes.c_int)
         self.set_timer = _api(user, "SetTimer", win.WPARAM, win.HWND, win.WPARAM, win.UINT, win.LPVOID)
+        self.kill_timer = _api(user, "KillTimer", win.BOOL, win.HWND, win.WPARAM)
         self.register_message = _api(user, "RegisterWindowMessageW", win.UINT, win.LPCWSTR)
         self.notify = _api(shell, "Shell_NotifyIconW", win.BOOL, win.DWORD, ctypes.POINTER(_NotifyIconData))
+        self.icon_rect = _api(
+            shell, "Shell_NotifyIconGetRect", win.LONG, ctypes.POINTER(_NotifyIconIdentifier), ctypes.POINTER(win.RECT),
+        )
         self.extract_icon = _api(
             shell, "ExtractIconExW", win.UINT, win.LPCWSTR, ctypes.c_int, ctypes.POINTER(win.HICON),
             ctypes.POINTER(win.HICON), win.UINT,
         )
         self.load_icon = _api(user, "LoadIconW", win.HICON, win.HINSTANCE, win.LPVOID)
+        self.load_image = _api(
+            user, "LoadImageW", win.HANDLE, win.HINSTANCE, win.LPCWSTR, win.UINT,
+            ctypes.c_int, ctypes.c_int, win.UINT,
+        )
+        self.metrics = _api(user, "GetSystemMetrics", ctypes.c_int, ctypes.c_int)
         self.destroy_icon = _api(user, "DestroyIcon", win.BOOL, win.HICON)
         self.create_menu = _api(user, "CreatePopupMenu", win.HMENU)
         self.add_menu_item = _api(user, "AppendMenuW", win.BOOL, win.HMENU, win.UINT, win.WPARAM, win.LPCWSTR)
         self.destroy_menu = _api(user, "DestroyMenu", win.BOOL, win.HMENU)
+        self.end_menu = _api(user, "EndMenu", win.BOOL)
         self.cursor_position = _api(user, "GetCursorPos", win.BOOL, ctypes.POINTER(win.POINT))
         self.foreground = _api(user, "SetForegroundWindow", win.BOOL, win.HWND)
         self.track_menu = _api(
@@ -107,14 +131,17 @@ def _short_text(value: str, capacity: int) -> str:
 
 
 class TrayIcon:
-    def __init__(self, open_window, exit_app, next_notice, open_adventure, open_widgets, open_notice, notice_event):
+    def __init__(self, open_window, exit_app, next_notice, open_adventure, open_widgets, open_notice, notice_event,
+                 *, language=None, icon_path=None):
         self._windows = _Windows()
-        self._menu = [(f"打开{APP_NAME}", open_window)]
+        self._menu = [(f"打开 {APP_NAME}", "Open Gao Savings", open_window)]
         if open_adventure is not None:
-            self._menu.append(("勇者冒险", open_adventure))
+            self._menu.append(("勇者冒险", "Adventure", open_adventure))
         if open_widgets is not None:
-            self._menu.append(("桌面小组件", open_widgets))
-        self._menu.append(("退出", exit_app))
+            self._menu.append(("桌面小组件", "Desktop widgets", open_widgets))
+        self._menu.append(("退出", "Exit", exit_app))
+        self._language = language
+        self._icon_path = icon_path
         self._next_notice = next_notice
         self._open_notice = open_notice or open_window
         self._notice_event = notice_event
@@ -127,19 +154,30 @@ class TrayIcon:
         self._icon = None
         self._registered = False
         self._modern_events = False
+        self._tracking_menu = False
+        self._last_activation = float("-inf")
+        self._last_menu_closed = float("-inf")
         self._taskbar_created = self._windows.register_message("TaskbarCreated")
 
     def close(self) -> None:
         self._closing.set()
-        if self._window:
-            self._windows.post_message(self._window, _WM_CLOSE, 0, 0)
-        self._thread.join(timeout=2)
+        window = self._window
+        if window:
+            self._windows.post_message(window, _WM_CLOSE, 0, 0)
+        if self._thread is not threading.current_thread() and self._thread.ident is not None:
+            self._thread.join(timeout=3)
+
+    def _english(self) -> bool:
+        choice = self._language() if self._language else "zh"
+        if choice == "system":
+            choice = locale.getlocale()[0]
+        return str(choice).lower().replace("-", "_").split("_", 1)[0] == "en"
 
     def _icon_data(self, window) -> _NotifyIconData:
         data = _NotifyIconData()
         data.size = ctypes.sizeof(data)
         data.window = window
-        data.identifier = 1
+        data.identifier = _ICON_ID
         return data
 
     def _attach(self, window) -> None:
@@ -148,10 +186,16 @@ class TrayIcon:
         data.message = _WM_TRAY
         data.icon = self._icon
         data.tip = APP_NAME
-        self._registered = bool(self._windows.notify(_NIM_ADD, ctypes.byref(data)))
+        api = self._windows
+        self._modern_events = False
+        self._registered = bool(api.notify(_NIM_ADD, ctypes.byref(data)))
+        if not self._registered:
+            # Windows also broadcasts TaskbarCreated after a DPI change. Reuse the same icon if it still exists.
+            self._registered = bool(api.notify(_NIM_MODIFY, ctypes.byref(data)))
         if self._registered:
-            data.version = 4
-            self._modern_events = bool(self._windows.notify(_NIM_SETVERSION, ctypes.byref(data)))
+            version = self._icon_data(window)
+            version.version = 4
+            self._modern_events = bool(api.notify(_NIM_SETVERSION, ctypes.byref(version)))
 
     def _poll_notice(self, window) -> None:
         if not self._registered or self._next_notice is None:
@@ -176,39 +220,84 @@ class TrayIcon:
         return sent
 
     def test_notification(self, title, body) -> bool:
-        if not self._window or self._closing.is_set():
+        window = self._window
+        if not window or self._closing.is_set():
             return False
+        if self._thread is threading.current_thread():
+            return self._submit(window, title, body)
         done = threading.Event()
         result = []
         self._notice_queue.put((title, body, done, result))
-        if not self._windows.post_message(self._window, _WM_NOTICE, 0, 0):
+        if not self._windows.post_message(window, _WM_NOTICE, 0, 0):
             return False
         return done.wait(timeout=1.5) and result[0]
 
+    def _menu_position(self, window):
+        icon = _NotifyIconIdentifier(size=ctypes.sizeof(_NotifyIconIdentifier), window=window, identifier=_ICON_ID)
+        rectangle = win.RECT()
+        if self._windows.icon_rect(ctypes.byref(icon), ctypes.byref(rectangle)) == 0:
+            return (rectangle.left + rectangle.right) // 2, (rectangle.top + rectangle.bottom) // 2
+        position = win.POINT()
+        self._windows.cursor_position(ctypes.byref(position))
+        return position.x, position.y
+
     def _show_menu(self, window) -> None:
+        # A single press can send both WM_RBUTTONUP and WM_CONTEXTMENU.
+        if self._tracking_menu or time.monotonic() - self._last_menu_closed < _CLICK_INTERVAL:
+            return
         api = self._windows
         menu = api.create_menu()
         if not menu:
             return
+        self._tracking_menu = True
         try:
-            for command, (label, _) in enumerate(self._menu, 1):
-                api.add_menu_item(menu, 0, command, label)
-            position = win.POINT()
-            api.cursor_position(ctypes.byref(position))
+            english = self._english()
+            for command, (chinese_label, english_label, _) in enumerate(self._menu, 1):
+                api.add_menu_item(menu, 0, command, english_label if english else chinese_label)
+            x, y = self._menu_position(window)
             api.foreground(window)
             flags = _TPM_RIGHTBUTTON | _TPM_NONOTIFY | _TPM_RETURNCMD
-            selected = api.track_menu(menu, flags, position.x, position.y, 0, window, None)
+            selected = api.track_menu(menu, flags, x, y, 0, window, None)
             api.post_message(window, _WM_NULL, 0, 0)
-            if 1 <= selected <= len(self._menu):
-                self._menu[selected - 1][1]()
-            else:
-                api.notify(_NIM_SETFOCUS, ctypes.byref(self._icon_data(window)))
         finally:
+            self._tracking_menu = False
+            self._last_menu_closed = time.monotonic()
             api.destroy_menu(menu)
+            if self._closing.is_set() and self._window:
+                api.destroy_window(window)
+        if self._closing.is_set():
+            return
+        if 1 <= selected <= len(self._menu):
+            self._menu[selected - 1][2]()
+        else:
+            api.notify(_NIM_SETFOCUS, ctypes.byref(self._icon_data(window)))
+
+    def _activate(self) -> None:
+        now = time.monotonic()
+        # Shell versions can report a single click as both a mouse release and NIN_SELECT.
+        if now - self._last_activation >= _CLICK_INTERVAL:
+            self._last_activation = now
+            self._menu[0][2]()
 
     def _window_message(self, window, message, wparam, lparam):
         try:
+            if message == _WM_CLOSE:
+                self._closing.set()
+                if self._tracking_menu:
+                    self._windows.end_menu()
+                else:
+                    self._windows.destroy_window(window)
+                return 0
+            if message == _WM_DESTROY:
+                self._windows.kill_timer(window, _TRAY_TIMER)
+                self._windows.notify(_NIM_DELETE, ctypes.byref(self._icon_data(window)))
+                self._registered = False
+                self._window = None
+                self._windows.post_quit(0)
+                return 0
             if message == _WM_TRAY:
+                if self._closing.is_set():
+                    return 0
                 event = lparam & 0xFFFF
                 notice_events = {
                     _NIN_BALLOONSHOW: "shown", _NIN_BALLOONHIDE: "hidden",
@@ -218,68 +307,85 @@ class TrayIcon:
                     self._notice_event(notice_events[event])
                 if event == _NIN_BALLOONUSERCLICK:
                     self._open_notice()
-                elif event in {_NIN_SELECT, _NIN_KEYSELECT, _WM_LBUTTONDBLCLK}:
-                    self._menu[0][1]()
-                elif event == _WM_CONTEXTMENU or (event == _WM_RBUTTONUP and not self._modern_events):
+                elif event in {_NIN_SELECT, _NIN_KEYSELECT, _WM_LBUTTONUP}:
+                    self._activate()
+                elif event in {_WM_CONTEXTMENU, _WM_RBUTTONUP}:
                     self._show_menu(window)
                 return 0
             if message == _WM_NOTICE:
                 title, body, done, result = self._notice_queue.get_nowait()
                 try:
-                    result.append(self._submit(window, title, body))
+                    result.append(not self._closing.is_set() and self._submit(window, title, body))
                 finally:
                     if not result:
                         result.append(False)
                     done.set()
                 return 0
-            if message == _WM_TIMER:
-                if not self._registered:
+            if message == _WM_TIMER and wparam == _TRAY_TIMER:
+                if not self._closing.is_set():
+                    if not self._registered:
+                        self._attach(window)
+                    self._poll_notice(window)
+                return 0
+            if self._taskbar_created and message == self._taskbar_created:
+                if not self._closing.is_set():
                     self._attach(window)
-                self._poll_notice(window)
-                return 0
-            if message == self._taskbar_created:
-                self._attach(window)
-                return 0
-            if message == _WM_DESTROY:
-                self._windows.notify(_NIM_DELETE, ctypes.byref(self._icon_data(window)))
-                self._windows.post_quit(0)
                 return 0
         except Exception:
             _log.exception("Windows notification area callback failed")
         return self._windows.default_procedure(window, message, wparam, lparam)
+
+    def _load_app_icon(self):
+        api = self._windows
+        if self._icon_path:
+            from_file = api.load_image(
+                None, os.fspath(self._icon_path), _IMAGE_ICON,
+                api.metrics(_SM_CXSMICON), api.metrics(_SM_CYSMICON), _LR_LOADFROMFILE,
+            )
+            if from_file:
+                return from_file
+        embedded = win.HICON()
+        api.extract_icon(sys.executable, 0, None, ctypes.byref(embedded), 1)
+        return embedded.value
 
     def _run(self) -> None:
         api = self._windows
         instance = api.module_handle(None)
         class_name = f"GaoJiXuNotificationArea_{os.getpid()}_{threading.get_ident()}"
         window_class = _WindowClass(procedure=self._callback, instance=instance, name=class_name)
-        owned_icon = win.HICON()
+        owned_icon = None
         registered_class = api.register_class(ctypes.byref(window_class))
         if not registered_class:
             self._ready.set()
             return
         try:
-            api.extract_icon(sys.executable, 0, None, ctypes.byref(owned_icon), 1)
-            self._icon = owned_icon.value or api.load_icon(None, 32512)
+            owned_icon = self._load_app_icon()
+            self._icon = owned_icon or api.load_icon(None, 32512)
             self._window = api.create_window(0, class_name, APP_NAME, 0, 0, 0, 0, 0, None, None, instance, None)
             if not self._window:
                 return
             if self._closing.is_set():
-                api.destroy_window(self._window)
                 return
             self._attach(self._window)
-            api.set_timer(self._window, 1, 30_000, None)
-            api.post_message(self._window, _WM_TIMER, 1, 0)
+            api.set_timer(self._window, _TRAY_TIMER, 30_000, None)
+            api.post_message(self._window, _WM_TIMER, _TRAY_TIMER, 0)
             self._ready.set()
             message = win.MSG()
             while api.get_message(ctypes.byref(message), None, 0, 0) > 0:
                 api.dispatch_message(ctypes.byref(message))
         finally:
+            self._closing.set()
+            if self._window:
+                api.destroy_window(self._window)
             self._window = None
-            self._ready.set()
-            if owned_icon.value:
+            while not self._notice_queue.empty():
+                _, _, done, result = self._notice_queue.get_nowait()
+                result.append(False)
+                done.set()
+            if owned_icon:
                 api.destroy_icon(owned_icon)
             api.unregister_class(class_name, instance)
+            self._ready.set()
 
 
 def start_tray(
@@ -291,15 +397,21 @@ def start_tray(
     open_widgets: Callable[[], None] | None = None,
     open_notice: Callable[[], None] | None = None,
     notice_event: Callable[[str], None] | None = None,
+    language: Callable[[], str] | None = None,
+    icon_path: str | os.PathLike[str] | None = None,
 ) -> TrayIcon | None:
-    """Start a background Win32 message pump for interactive launches."""
+    """Start a background Win32 message pump. Callbacks should return promptly."""
     if sys.platform != "win32":
         return None
     try:
-        tray = TrayIcon(open_window, exit_app, next_notice, open_adventure, open_widgets, open_notice, notice_event)
-    except OSError:
+        tray = TrayIcon(
+            open_window, exit_app, next_notice, open_adventure, open_widgets, open_notice, notice_event,
+            language=language, icon_path=icon_path,
+        )
+    except (AttributeError, OSError):
         _log.exception("Windows notification area is unavailable")
         return None
     tray._thread.start()
-    tray._ready.wait(timeout=2)
+    if tray._ready.wait(timeout=2) and not tray._window:
+        return None
     return tray

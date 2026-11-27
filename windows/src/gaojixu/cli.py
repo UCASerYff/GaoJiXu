@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from gaojixu.desktop import RunningInstance, WIDGETS, open_target, open_window, start_widgets, target_for
+from gaojixu.desktop import DesktopSession, RunningInstance, WIDGETS, forward_target, target_for
 from gaojixu.errors import AppError
 from gaojixu.monthly_signal import signal as signal_monthly_change
 from gaojixu.monthly_notices import MonthlyNotices
@@ -30,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--notify-monthly-change", action="store_true")
     parser.add_argument("link", nargs="?")
     args = parser.parse_args(argv)
+    command_line = getattr(sys, "frozen", False) and Path(sys.executable).stem.lower() == "gaojixu-cli"
     if args.version:
         print(VERSION_LABEL)
         return 0
@@ -50,22 +51,24 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     instance = RunningInstance(directory)
     if not instance.acquire():
-        if args.no_browser or args.widget_snapshot or args.create_empty:
+        if command_line or args.no_browser or args.widget_snapshot or args.create_empty:
             print("这份资料已在另一个搞积蓄窗口打开。", file=sys.stderr)
             return 2
         url = instance.running_url()
         if not url:
             print("搞积蓄正在启动，请稍后重试。", file=sys.stderr)
             return 2
-        open_target(url, target, existing=True)
-        return 0
+        if forward_target(url, target, instance.key):
+            return 0
+        print("搞积蓄暂时无法打开窗口，请稍后重试。", file=sys.stderr)
+        return 2
     try:
-        return _run(args, directory, instance, target)
+        return _run(args, directory, instance, target, graphical=not args.no_browser and not command_line)
     finally:
         instance.close()
 
 
-def _run(args, directory, instance, target):
+def _run(args, directory, instance, target, *, graphical):
     store = Store(directory)
     try:
         if args.create_empty:
@@ -87,32 +90,48 @@ def _run(args, directory, instance, target):
     server = serve(store, port=args.port, open_browser=False, instance_key=instance.key)
     tray = None
     try:
-        instance.publish(server.server_address[1])
-        if not args.no_browser:
-            server.desktop_widgets = start_widgets(server.url, instance.key)
+        if graphical:
+            desktop = server.desktop = DesktopSession(server.url, instance.key)
+            server.desktop_widgets = desktop.widgets
+
+            def open_desktop(target=""):
+                if not server.shutdown_requested.is_set():
+                    desktop.open(target)
+
+            def request_quit():
+                if not desktop.main or not desktop.main.request_quit():
+                    server.request_shutdown()
+
             tray = start_tray(
-                lambda: open_window(server.url),
-                server.shutdown_requested.set,
+                open_desktop,
+                request_quit,
                 MonthlyNotices(server).next_notice,
-                open_adventure=lambda: open_window(server.url + "#adventure"),
-                open_widgets=lambda: open_window(server.url + "#widgets"),
-                open_notice=lambda: open_window(server.url + "#fixed-expenses"),
+                open_adventure=lambda: open_desktop("#adventure"),
+                open_widgets=lambda: open_desktop("#widgets"),
+                open_notice=lambda: open_desktop("#fixed-expenses"),
+                language=lambda: store.settings.get("language", "system"),
             )
             server.desktop_tray = tray
-            open_target(server.url, target, manager=server.desktop_widgets)
+        instance.publish(server.server_address[1])
+        if graphical:
+            desktop.open(target)
             if server.desktop_widgets:
                 server.desktop_widgets.restore()
         server.shutdown_requested.wait()
     except KeyboardInterrupt:
         pass
     finally:
-        server.shutdown_requested.set()
-        if server.desktop_widgets:
-            server.desktop_widgets.close()
-        server.shutdown()
-        if tray:
-            tray.close()
-        server.server_close()
+        server.request_shutdown()
+        try:
+            if tray:
+                tray.close()
+        finally:
+            try:
+                server.shutdown()
+                server.server_close()
+            finally:
+                if server.desktop:
+                    server.desktop.close()
     return 0
 
 

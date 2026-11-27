@@ -1,21 +1,23 @@
 # 搞积蓄 Windows 版
 
-面向 Windows 10/11 x64 的独立应用版本 **4.06**。Windows 构建号为 **4**，命令行显示 `4.06+4`。
+面向 Windows 10/11 x64 的独立应用版本 **4.06**。Windows 构建号为 **5**，命令行显示 `4.06+5`。
 
 主窗口与五个小组件优先使用本机 Microsoft Edge 或 Chromium 的应用模式。找不到可用的应用模式入口时，在系统默认浏览器中打开。服务只监听 `127.0.0.1`。
+
+关闭工作台后，「搞积蓄」仍在 Windows 通知区域运行。单击图标或选择「打开 搞积蓄」可恢复工作台。Windows 可能将图标放在隐藏图标区。选择托盘或工作台的「退出」会停止后台服务并关闭工作台和小组件。工作台有未保存的编辑时，可以返回编辑并保存，或放弃该次修改后退出。使用系统浏览器回退时，浏览器标签由浏览器管理。
 
 Windows 桌面小组件可固定在前台、调整大小和位置、关闭或跳回主窗口。应用保存布局，退出后下次启动会恢复上次仍打开的固定窗口。布局保存在 `%LOCALAPPDATA%\GaoSeries\GaoJiXuDesktop\`，按资料目录分别管理。
 
 ## 安装
 
-双击构建 4 的发布安装包 `GaoJiXu-Windows-4.06-build4-x64.msi`，完成后从开始菜单打开「搞积蓄」。开始菜单还提供每日收支与积蓄、净资产、固定支出、权益打卡和勇者冒险小组件的独立入口。安装程序同时为当前 Windows 用户注册 `gaojixu://`。升级或卸载前可在应用中选择「退出」。
+双击构建 5 的发布安装包 `GaoJiXu-Windows-4.06-build5-x64.msi`，完成后从开始菜单打开「搞积蓄」。开始菜单还提供每日收支与积蓄、净资产、固定支出、权益打卡和勇者冒险小组件的独立入口。安装程序同时为当前 Windows 用户注册 `gaojixu://`。升级或卸载前可在应用中选择「退出」。
 
 安装程序将应用装在 `%LOCALAPPDATA%\GaoJiXu\`。通过 Windows「设置 → 应用」卸载，资料保留在原目录。此前的便携版与安装版使用相同的资料目录。
 
 下载后可以将计算结果与随包提供的 `.msi.sha256` 文件比对。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\GaoJiXu-Windows-4.06-build4-x64.msi
+Get-FileHash -Algorithm SHA256 .\GaoJiXu-Windows-4.06-build5-x64.msi
 ```
 
 当前安装包无 Authenticode 签名。隔离安装已在 Windows 11 x64 上验证。Windows 10 x64 未使用独立虚拟机验证。
@@ -40,10 +42,10 @@ GitHub Actions 在 Windows 运行器上构建并静默安装 MSI，验证两个 
 
 ```powershell
 cd windows
-$work = Join-Path $PWD 'build/release-4.06.4'
+$work = Join-Path $PWD 'build/release-4.06.5'
 $candidate = Join-Path $work 'candidate'
 .\build.ps1 -BuildDirectory $work -DistributionDirectory $candidate
-python tests/smoke_install.py "$candidate/GaoJiXu-Windows-4.06-x64.msi" --upgrade-from dist/4.06.3/GaoJiXu-Windows-4.06-x64.msi --isolate-identities
+python tests/smoke_install.py "$candidate/GaoJiXu-Windows-4.06-x64.msi" --upgrade-from dist/4.06.4/GaoJiXu-Windows-4.06-build4-x64.msi --isolate-identities
 ```
 
 只跑源码测试可使用以下命令。
@@ -52,6 +54,13 @@ python tests/smoke_install.py "$candidate/GaoJiXu-Windows-4.06-x64.msi" --upgrad
 cd windows
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
+```
+
+Windows 托盘烟测使用合成资料和独立桌面。第一条命令验证正常启动、关窗留驻、托盘恢复和退出流程，需要 Node.js。第二条命令在 Explorer 中注册隐藏的测试图标，核对注册、重建和删除。
+
+```powershell
+python tests/smoke_tray.py --evidence build/tray-evidence
+python tests/smoke_tray.py --shell-only
 ```
 
 在 Linux 或 macOS 上也可以跑同一套测试。开发时启动界面：
@@ -65,7 +74,7 @@ PYTHONPATH=src python3 launch.py --data-dir /tmp/gaojixu-dev --no-browser --port
 
 ## 资料和命令行
 
-命令行程序 `GaoJiXu-cli.exe` 随 MSI 安装，可用于读取资料状态和写出小组件快照。关闭界面后冒险仍可继续结算。应用中的「退出」会停止服务。
+命令行程序 `GaoJiXu-cli.exe` 随 MSI 安装，可用于读取资料状态和写出小组件快照。它启动的服务采用无界面模式。关闭工作台后冒险仍可继续结算。
 
 资料目录：
 
@@ -83,7 +92,7 @@ PYTHONPATH=src python3 launch.py --data-dir /tmp/gaojixu-dev --no-browser --port
 | `--inspect` | 只读打印账户、流水、目标和等级条数，不打印备注 |
 | `--widget-snapshot` | 写出 schema 2 的 `gaojixu-widget.json` |
 | `--notify-monthly-change` | 在同一 Windows 会话中唤醒使用同一资料目录的月供接收器 |
-| `--version` | 打印 `4.06+4` |
+| `--version` | 打印 `4.06+5` |
 | `--widget TYPE` | 打开每日收支与积蓄 `calendar`、净资产 `net-worth`、固定支出 `expenses`、权益打卡 `benefits` 或勇者冒险 `adventure` 窗口 |
 
 ## 数据

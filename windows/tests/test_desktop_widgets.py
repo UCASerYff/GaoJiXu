@@ -8,7 +8,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 from gaojixu import monthly
-from gaojixu.desktop import open_target
+from gaojixu.desktop import DesktopMain, DesktopSession, forward_target
 from gaojixu.desktop_widgets import DesktopWidgets, TYPES
 from gaojixu.errors import AppError
 from gaojixu.monthly_notices import MonthlyNotices
@@ -31,6 +31,9 @@ class TestWindows:
     def belongs(self, hwnd, lease):
         return self.windows.get(lease) == hwnd
 
+    def visible(self, hwnd):
+        return hwnd in self.windows.values()
+
     def topmost(self, hwnd):
         return self.pinned.get(hwnd, False)
 
@@ -50,6 +53,59 @@ class TestWindows:
     def close(self, hwnd):
         lease = next(lease for lease, handle in self.windows.items() if handle == hwnd)
         del self.windows[lease]
+
+
+def test_workbench_restore_routes_and_quit_in_owned_window(tmp_path):
+    windows = TestWindows()
+    launches = []
+    closed = threading.Event()
+    browser = SimpleNamespace(profile=tmp_path / "browser", launch=lambda options, **_kw: launches.append(options),
+                              workbench_running=lambda _profile: not closed.is_set())
+    main = DesktopMain("http://127.0.0.1:5000/", tmp_path / "chrome.exe", windows, browser)
+    main.open()
+    first = main._lease
+    main.open("#ledger")
+    assert len(launches) == 1 and main.events(first) == {"attached": False}
+    windows.windows[first] = 8
+    main.open()
+    assert windows.foreground == 8
+    assert main.request_quit()
+    assert main.events("unrelated") == {}
+    assert main.events(first) == {"attached": True, "route": "ledger", "quit": True}
+    assert main.events(first) == {"attached": True, "route": "", "quit": False}
+    windows.close(8)
+    closed.set()
+    assert not main.request_quit()
+    main.open("#fixed-expenses")
+    assert len(launches) == 2 and main._lease != first
+    assert launches[0][1] != launches[1][1]
+    assert launches[-1][-1].endswith("#fixed-expenses")
+    main.close()
+
+
+def test_reopen_replaces_closed_workbench_before_hwnd_was_attached(tmp_path):
+    launches = []
+    closed = threading.Event()
+    reopened = threading.Event()
+
+    def launch(options, **_kwargs):
+        launches.append(options)
+        if len(launches) == 2:
+            reopened.set()
+
+    browser = SimpleNamespace(profile=tmp_path / "browser", launch=launch,
+                              workbench_running=lambda _profile: not closed.is_set())
+    main = DesktopMain("http://127.0.0.1:5000/", tmp_path / "chrome.exe", TestWindows(), browser)
+    try:
+        main.open()
+        main.open("#ledger")
+        assert len(launches) == 1
+        main._startup_until = 0.0
+        closed.set()
+        assert reopened.wait(2)
+        assert launches[-1][-1].endswith("#ledger")
+    finally:
+        main.close()
 
 
 def test_desktop_widget_pin_restore_duplicate_and_close(tmp_path):
@@ -111,12 +167,15 @@ def test_desktop_layout_future_version_preserved(tmp_path):
 
 def test_desktop_api_auth_secondary_launch_and_notification(tmp_path, monkeypatch):
     store = Store(tmp_path / "synthetic-data")
-    server = serve(store, open_browser=False)
+    server = serve(store, open_browser=False, instance_key="profile-id")
     windows = TestWindows()
     launches = []
     manager = DesktopWidgets(server.url, tmp_path / "widgets", "chrome.exe", windows,
                              launch=lambda args, **_kw: launches.append(args))
     server.desktop_widgets = manager
+    monkeypatch.setattr("gaojixu.desktop.chromium", lambda: None)
+    server.desktop = DesktopSession(server.url, server.instance_key)
+    server.desktop.widgets = manager
     notifications = []
 
     class Tray:
@@ -139,7 +198,10 @@ def test_desktop_api_auth_secondary_launch_and_notification(tmp_path, monkeypatc
         with pytest.raises(HTTPError) as error:
             post("api/desktop/widgets", {"command": "open", "widget": "calendar"}, "bogus")
         assert error.value.code == 403
-        open_target(server.url, "?widget=benefits", existing=True)
+        assert not forward_target(server.url, "?widget=benefits", "another-profile")
+        assert not forward_target(server.url, "?widget=benefits#unknown", server.instance_key)
+        assert not launches
+        assert forward_target(server.url, "?widget=benefits", server.instance_key)
         assert len(launches) == 1 and "widget=benefits" in launches[0][-1]
         assert {"submitted": True} == post("api/desktop/notification-test", {"language": "en"}, server.token)["result"]
         assert notifications[0][0] == "Gao Savings · Notification test"

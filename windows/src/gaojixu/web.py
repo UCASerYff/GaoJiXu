@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from gaojixu import adventure, adventure_view, csvutil, finance, finance_views, monthly, monthly_bridge
-from gaojixu.desktop import open_window
+from gaojixu.desktop import open_window, valid_target
 from gaojixu.errors import AppError
 from gaojixu.monthly_integration import MonthlyIntegration
 from gaojixu.resources import asset_dir, mac_asset_dir
@@ -22,16 +22,19 @@ from gaojixu.version import VERSION_LABEL
 
 class SavingsServer(ThreadingHTTPServer):
     allow_reuse_address = False
+    daemon_threads = False
 
     def __init__(self, store: Store, host: str = "127.0.0.1", port: int = 0, instance_key: str = ""):
         self.store = store
         self.token = secrets.token_urlsafe(24)
         self.instance_key = instance_key
         self.lock = threading.Lock()
+        self.desktop = None
         self.desktop_widgets = None
         self.desktop_tray = None
         self.last_test_notice = float("-inf")
         self.shutdown_requested = threading.Event()
+        self.battle_thread = None
         self.monthly_integration = MonthlyIntegration(store, self.lock, self.shutdown_requested)
         super().__init__((host, port), Handler)
 
@@ -40,16 +43,22 @@ class SavingsServer(ThreadingHTTPServer):
         host, port = self.server_address[:2]
         return f"http://{host}:{port}/"
 
-    def server_close(self) -> None:
+    def request_shutdown(self) -> None:
         self.shutdown_requested.set()
+
+    def server_close(self) -> None:
+        self.request_shutdown()
         super().server_close()
         monthly_thread = self.monthly_integration.thread
         if monthly_thread.is_alive():
-            monthly_thread.join(timeout=2)
+            monthly_thread.join()
+        if self.battle_thread and self.battle_thread.is_alive():
+            self.battle_thread.join()
 
 
 class Handler(BaseHTTPRequestHandler):
     server: SavingsServer
+    timeout = 5
 
     def do_GET(self) -> None:
         if not self._valid_host():
@@ -60,6 +69,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/":
             self._page()
+            return
+        if parsed.path == "/api/desktop/events":
+            if self._authorized():
+                desktop = self.server.desktop
+                lease = parse_qs(parsed.query).get("lease", [""])[0]
+                self._json(desktop.main.events(lease) if desktop and desktop.main else {})
             return
         if parsed.path == "/api/state":
             if not self._authorized():
@@ -149,18 +164,35 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/shutdown":
             if not self._authorized():
                 return
+            self.server.request_shutdown()
             self._json({"ok": True})
-            self.server.shutdown_requested.set()
-            threading.Thread(target=self.server.shutdown, daemon=True).start()
             return
         if not self._authorized():
             return
         try:
+            if self.server.shutdown_requested.is_set():
+                raise AppError("搞积蓄正在退出。", "shutting-down")
             payload = self._body()
+            if parsed.path == "/api/desktop/open":
+                target = payload.get("target")
+                if not valid_target(target):
+                    raise AppError("无法打开此搞积蓄页面。", "desktop-route")
+                desktop = self.server.desktop
+                if desktop:
+                    desktop.open(target)
+                else:
+                    open_window(self.server.url + target)
+                self._json({"ok": True})
+                return
             if parsed.path == "/api/desktop/widgets":
                 manager = self.server.desktop_widgets
                 if manager is not None:
-                    result = manager.request(payload, lambda route: open_window(self.server.url + "#" + route))
+                    def open_route(route):
+                        if self.server.desktop:
+                            self.server.desktop.open("#" + route)
+                        else:
+                            open_window(self.server.url + "#" + route)
+                    result = manager.request(payload, open_route)
                 elif payload.get("command") == "status":
                     result = {"available": False, "windows": {}}
                 else:
@@ -184,6 +216,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "result": {"submitted": True}})
                 return
             with self.server.lock:
+                if self.server.shutdown_requested.is_set():
+                    raise AppError("搞积蓄正在退出。", "shutting-down")
                 if self.server.store.status == "ready":
                     self.server.store.notice = ""
                 result = dispatch(self.server.store, parsed.path, payload)
@@ -411,8 +445,8 @@ def serve(store: Store, port: int = 0, open_browser: bool = True, instance_key: 
     server.monthly_integration.thread.start()
     thread = threading.Thread(target=server.serve_forever, name="gaojixu-http", daemon=True)
     thread.start()
-    battle = threading.Thread(target=_battle_loop, args=(server,), name="gaojixu-battle", daemon=True)
-    battle.start()
+    server.battle_thread = threading.Thread(target=_battle_loop, args=(server,), name="gaojixu-battle", daemon=True)
+    server.battle_thread.start()
     if open_browser:
         import webbrowser
         webbrowser.open(server.url)
