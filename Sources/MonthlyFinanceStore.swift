@@ -136,12 +136,12 @@ private enum MonthlyFinanceReminder {
     guard let limit = c.date(byAdding: .day, value: 90, to: now) else { return }
     var items: [Item] = []
     for sub in s.subscriptions where !sub.archived && sub.renewing {
+      let advanceDays: Int = sub.reminderDays ?? s.preferences.reminderDays
+      let advances: Set<Int> = sub.autoRenew ? [advanceDays, 0] : [advanceDays]
       var bills = MonthlyFinanceEngine.bills(sub, state: s, from: now, through: limit)
       if bills.isEmpty, let b = MonthlyFinanceEngine.next(sub, s, now: now) { bills = [b] }
       for bill in bills where !MonthlyFinanceEngine.covered(bill, s) {
-        for advance in Set(
-          [sub.reminderDays ?? s.preferences.reminderDays] + (sub.autoRenew ? [0] : []))
-        {
+        for advance in advances {
           if let day = c.date(byAdding: .day, value: -advance, to: bill.date),
             let at = c.date(
               bySettingHour: s.preferences.reminderHour, minute: 0, second: 0, of: day), at > now
