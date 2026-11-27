@@ -103,7 +103,7 @@ final class SavingsStore: ObservableObject {
         #if !SMOKE_TEST && !UNIT_TEST
         // 退出前把防抖窗口内未落盘的脏数据同步写盘。
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.flushSave() }
+            MainActor.assumeIsolated { _ = self?.flushSave() }
         }
         #endif
     }

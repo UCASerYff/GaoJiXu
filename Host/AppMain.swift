@@ -126,11 +126,15 @@ final class AppDelegate: NSObject, ObservableObject, NSApplicationDelegate, UNUs
         let center = NotificationCenter.default
         observers = [
             center.addObserver(forName: Notification.Name("Standalone.showWindow"), object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.showMainWindow() }
+                MainActor.assumeIsolated {
+                    if let self { self.showMainWindow() }
+                }
             },
             center.addObserver(forName: Notification.Name("GaoSeries.dataError"), object: nil, queue: .main) { [weak self] note in
                 let message = note.userInfo?["message"] as? String
-                MainActor.assumeIsolated { self?.dataError = message }
+                MainActor.assumeIsolated {
+                    if let self { self.dataError = message }
+                }
             }
         ]
         SavingsModuleRuntime.start()
