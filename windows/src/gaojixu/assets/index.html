@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/assets/finance.css">
   <link rel="stylesheet" href="/assets/adventure.css">
   <script defer src="/assets/workbench.js"></script>
+  <script defer src="/assets/csv-review.js"></script>
   <script defer src="/assets/finance-ui.js"></script>
   <script defer src="/assets/fixed.js"></script>
   <script defer src="/assets/adventure-scene.js"></script>
@@ -58,6 +59,30 @@
     <div class="feedback-copy"><strong id="feedback-title"></strong><p id="feedback-content"></p></div>
     <button id="feedback-dismiss" class="icon-button ghost" type="button" aria-label="关闭">×</button>
   </aside>
+  <dialog id="csv-review" aria-labelledby="csv-review-title">
+    <div class="csv-review-shell">
+      <header class="editor-header">
+        <div><h2 id="csv-review-title"></h2><p data-csv-intro></p></div>
+        <button type="button" class="icon-button ghost" data-csv-close autofocus>×</button>
+      </header>
+      <div class="editor-content">
+        <form class="csv-upload">
+          <label><span data-csv-file-label></span><input type="file" accept=".csv,text/csv" data-csv-file required></label>
+          <button type="submit" data-csv-stage></button>
+        </form>
+        <p data-csv-error class="csv-error" role="alert" hidden></p>
+        <div class="csv-review-body">
+          <nav data-csv-batches></nav>
+          <section data-csv-result></section>
+        </div>
+      </div>
+      <footer class="editor-actions csv-review-actions">
+        <p data-csv-status role="status"></p>
+        <button type="button" class="ghost" data-csv-undo hidden></button>
+        <button type="button" data-csv-apply hidden></button>
+      </footer>
+    </div>
+  </dialog>
   <dialog id="editor" aria-labelledby="editor-title">
     <form id="editor-form">
       <div class="editor-header">

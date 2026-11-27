@@ -326,7 +326,7 @@
     const choice = viewOptions[type];
     const isLedger = type === "ledger";
     const dateLabel = t("按日期筛选", "Filter by date");
-    const controls = isLedger ? action("rules",t("周期记账","Recurring rules"),"repeat") + action("new-ledger",t("记此日","Record on this date"),"plus","") :
+    const controls = isLedger ? action("csv-review",t("导入审核箱","Import inbox"),"tray.full.fill") + action("rules",t("周期记账","Recurring rules"),"repeat") + action("new-ledger",t("记此日","Record on this date"),"plus","") :
       action("new-record",t("记一笔积蓄","New savings record"),"plus","");
     const searchField = isLedger ? `<label class="finance-search">${icon("magnifyingglass")}${input("ledger-query", choice.q || "",
       `type="search" placeholder="${h(t("搜索备注、分类、账户或金额", "Search notes, categories, accounts or amounts"))}" aria-label="${h(t("搜索流水", "Search transactions"))}"`)}</label>` : "";
@@ -385,6 +385,7 @@
         Object.assign(choice,{q:"",day:"",kind:"",page:0});
         refreshHistory();
       },
+      "csv-review": () => window.GaoCSVReview.open(),
       rules: openRules, "new-ledger": () => openLedger(undefined,{date:choice.day || undefined}), "new-record": () => openRecord(undefined,{date:choice.day || undefined}),
       "edit-ledger": id => showLedger(find(id)),
       "delete-ledger": id => confirmAction(t("删除这笔账？", "Delete this transaction?"), t("本次操作会移除所选流水。", "This removes the selected transaction."), () => api("/api/ledger/delete",{id})),
@@ -942,28 +943,6 @@
     });
   }
 
-  function importCSV() {
-    const countsList = counts => `<dl class="finance-result-list">${counts.map(([label,count]) => `<dt>${h(label)}</dt><dd>${h(count)}</dd>`).join("")}</dl>`;
-    openEditor({title:t("导入流水 CSV", "Import transactions CSV"),width:500,
-      body:formSection(t("选择 CSV 文件", "Choose a CSV file"),field(t("流水文件", "Transactions file"),input("ledgerFile","",'type="file" accept=".csv,text/csv" required'))+`<small class="muted">${t("使用搞积蓄流水 CSV 格式。重复流水会被跳过。", "Use the Gao Savings transaction format. Duplicate transactions are skipped.")}</small>`),
-      submitLabel:t("预览", "Preview"),onSubmit:async form => {
-        const file = form.elements.ledgerFile.files[0];
-        if (!file) return false;
-        if (file.size > 7*1024*1024) throw new Error(t("请选择小于 7 MiB 的文件。", "Choose a file smaller than 7 MiB."));
-        const text = await file.text();
-        const plan = await api("/api/csv/preview",{text});
-        const counts = [[t("可导入", "Ready to import"),plan.importable],[t("重复流水", "Duplicates"),plan.duplicates],[t("无效行", "Skipped"),plan.skipped],[t("新建账户", "New accounts"),plan.newAccounts]];
-        const rows = plan.preview.map(item => `<div class="finance-line"><div><strong>${h(item.accountName)}${item.targetAccountName ? ` → ${h(item.targetAccountName)}` : ""}</strong><br><small class="muted">${h(item.date)} · ${h(enumTitle(ledgerKinds,item.kind))}${item.note ? ` · ${h(item.note)}` : ""}</small></div><span class="finance-number">${h(money(item.amount,item.currency))}</span></div>`).join("");
-        const warning = plan.crossCurrency ? `<p class="muted">${t("CSV 只含转出金额。跨币种流水导入后，请在流水编辑器中填写实际转入金额。", "CSV files contain the amount sent. After importing cross-currency transfers, update the amount received in the transaction editor.")}</p>` : "";
-        openEditor({title:t("导入预览", "Import preview"),subtitle:file.name,width:590,body:countsList(counts)+warning+(rows ? formSection(t("流水预览", "Transaction preview"),rows) : ""),submitLabel:t("确认导入", "Import"),onSubmit:plan.importable ? async () => {
-          const result = await api("/api/csv/import",{text});
-          const counts = [[t("已导入", "Imported"),result.imported],[t("重复流水", "Duplicates"),result.duplicates],[t("无效行", "Skipped"),result.skipped],[t("新建账户", "New accounts"),result.newAccounts]];
-          openEditor({title:t("导入完成", "Import complete"),body:countsList(counts)});
-          return false;
-        } : undefined});
-        return false;
-      }});
-  }
   async function exportCSV() {
     const result = await fetch("/api/export/ledger.csv",{headers});
     if (!result.ok) throw new Error(t("无法导出流水。", "Could not export transactions."));
@@ -987,5 +966,5 @@
       case "goals": renderGoals(root); break;
     }
   }
-  window.GaoFinance = {render, openLedger, openRecord, importCSV, exportCSV};
+  window.GaoFinance = {render, openLedger, openRecord, exportCSV};
 })();

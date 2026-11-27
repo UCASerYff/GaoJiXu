@@ -1,6 +1,6 @@
 # 搞积蓄 Windows 版
 
-面向 Windows 10/11 x64 的独立应用版本 **4.06**。Windows 构建号为 **5**，命令行显示 `4.06+5`。
+面向 Windows 10/11 x64 的独立应用版本 **4.06**。Windows 构建号为 **6**，命令行显示 `4.06+6`。
 
 主窗口与五个小组件优先使用本机 Microsoft Edge 或 Chromium 的应用模式。找不到可用的应用模式入口时，在系统默认浏览器中打开。服务只监听 `127.0.0.1`。
 
@@ -10,14 +10,14 @@ Windows 桌面小组件可固定在前台、调整大小和位置、关闭或跳
 
 ## 安装
 
-双击构建 5 的发布安装包 `GaoJiXu-Windows-4.06-build5-x64.msi`，完成后从开始菜单打开「搞积蓄」。开始菜单还提供每日收支与积蓄、净资产、固定支出、权益打卡和勇者冒险小组件的独立入口。安装程序同时为当前 Windows 用户注册 `gaojixu://`。升级或卸载前可在应用中选择「退出」。
+双击构建 6 的发布安装包 `GaoJiXu-Windows-4.06-build6-x64.msi`，完成后从开始菜单打开「搞积蓄」。开始菜单还提供每日收支与积蓄、净资产、固定支出、权益打卡和勇者冒险小组件的独立入口。安装程序同时为当前 Windows 用户注册 `gaojixu://`。升级或卸载前可在应用中选择「退出」。
 
 安装程序将应用装在 `%LOCALAPPDATA%\GaoJiXu\`。通过 Windows「设置 → 应用」卸载，资料保留在原目录。此前的便携版与安装版使用相同的资料目录。
 
 下载后可以将计算结果与随包提供的 `.msi.sha256` 文件比对。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\GaoJiXu-Windows-4.06-build5-x64.msi
+Get-FileHash -Algorithm SHA256 .\GaoJiXu-Windows-4.06-build6-x64.msi
 ```
 
 当前安装包无 Authenticode 签名。隔离安装已在 Windows 11 x64 上验证。Windows 10 x64 未使用独立虚拟机验证。
@@ -42,10 +42,10 @@ GitHub Actions 在 Windows 运行器上构建并静默安装 MSI，验证两个 
 
 ```powershell
 cd windows
-$work = Join-Path $PWD 'build/release-4.06.5'
+$work = Join-Path $PWD 'build/release-4.06.6'
 $candidate = Join-Path $work 'candidate'
 .\build.ps1 -BuildDirectory $work -DistributionDirectory $candidate
-python tests/smoke_install.py "$candidate/GaoJiXu-Windows-4.06-x64.msi" --upgrade-from dist/4.06.4/GaoJiXu-Windows-4.06-build4-x64.msi --isolate-identities
+python tests/smoke_install.py "$candidate/GaoJiXu-Windows-4.06-x64.msi" --upgrade-from dist/4.06.5/GaoJiXu-Windows-4.06-build5-x64.msi --isolate-identities
 ```
 
 只跑源码测试可使用以下命令。
@@ -92,14 +92,14 @@ PYTHONPATH=src python3 launch.py --data-dir /tmp/gaojixu-dev --no-browser --port
 | `--inspect` | 只读打印账户、流水、目标和等级条数，不打印备注 |
 | `--widget-snapshot` | 写出 schema 2 的 `gaojixu-widget.json` |
 | `--notify-monthly-change` | 在同一 Windows 会话中唤醒使用同一资料目录的月供接收器 |
-| `--version` | 打印 `4.06+5` |
+| `--version` | 打印 `4.06+6` |
 | `--widget TYPE` | 打开每日收支与积蓄 `calendar`、净资产 `net-worth`、固定支出 `expenses`、权益打卡 `benefits` 或勇者冒险 `adventure` 窗口 |
 
 ## 数据
 
 | 位置 | 内容 |
 | --- | --- |
-| `library.json` | schema 24：账户、流水、预算、周期规则、攒钱目标、积蓄记录、固定收入、冒险进度。日期是 Mac 的 Cocoa 秒（自 2001-01-01 UTC 起）。未知字段保留 |
+| `library.json` | schema 24 保存账户、流水、导入审核、预算、周期规则、攒钱目标、积蓄记录、固定收入和冒险进度。日期是 Mac 的 Cocoa 秒（自 2001-01-01 UTC 起）。未知字段保留 |
 | `settings.json` | 外观、语言、背景色、默认币种、预算结转 |
 | `gaojixu-widget.json` | schema 2 财务快照，另有一份在 `IsolatedWidgetGroup/`。高于 schema 2 的已有快照不覆盖 |
 | `monthly-account-bindings.json` | 固定支出订阅与流水账户的绑定 |
@@ -122,12 +122,16 @@ Mac 上账本位于 `~/Library/Application Support/GaoSeries/Savings/`，小组�
 | 工作台 | 功能 |
 | --- | --- |
 | 总览 | 净资产、本月收支和预算、最近流水、当前目标和可展开的月历 |
-| 收支 | 流水编辑、搜索和筛选、账户、信用账户和余额调整、同币种和跨币种转账、预算、周期记账、CSV、报表 |
+| 收支 | 流水编辑、搜索和筛选、账户、信用账户和余额调整、同币种和跨币种转账、预算、周期记账、CSV 导入审核箱、报表 |
 | 固定收支 | 固定收入确认到账、订阅、待核实账期、支付历史和账户绑定、权益领取、到期事项、复盘及对账 |
 | 攒钱 | 目标管理、积蓄明细、存取对应流水、统计和冒险奖励 |
 | 冒险 | WebGL 立体战斗与营地、视角旋转与缩放、自动结算、装备、技能、宠物、祈愿、图鉴和成就 |
 | 设置 | 模块设置、外观与数据页。可在文件资源管理器打开现用资料和小组件快照目录 |
 | Windows 集成 | 系统托盘、固定支出提醒与测试通知、`gaojixu://` 跳转、可独立固定与恢复的五种桌面小组件 |
+
+从「流水」或工作台更多菜单打开「导入审核箱」。UTF-8 CSV 每批最多 2,000 行。上传后，批次会存为待审核。每笔记录可以确认、保留待审核或跳过。疑似重复附上判断依据，确认重复入账需要逐笔选择。同批次内，存在明确转账线索且能唯一配对的同币种收支，可以审核后合并成一笔账户转账。
+
+缺少必要资料的记录可补齐后再确认。带 UTC 偏移的时间保留原时刻，未注明偏移的时间按暂存或修正时的账本时区解释。跨币种转账需要核实转入币种和实际到账金额。重选同批流水会回到之前的审核状态。如果本批入账的流水已修改、删除或关联积蓄记录，整批撤销会停止。撤销时保留本批新建的账户。
 
 ## 已知限制
 

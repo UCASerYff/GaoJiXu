@@ -90,7 +90,7 @@ function icon(name) {
 async function get(path) {
   const response = await fetch(path, {headers});
   const result = await response.json();
-  if (!response.ok || result.ok === false) throw requestError(path, result.error);
+  if (!response.ok || result.ok === false) throw requestError(path, result.error, result.code);
   return result;
 }
 async function api(path, body) {
@@ -99,7 +99,7 @@ async function api(path, body) {
   try {
     const response = await fetch(path, {method:"POST", headers, body:JSON.stringify(body || {})});
     const data = await response.json();
-    if (!response.ok || !data.ok) throw requestError(path, data.error);
+    if (!response.ok || !data.ok) throw requestError(path, data.error, data.code);
     if (data.state) {
       state = data.state;
       render();
@@ -110,9 +110,11 @@ async function api(path, body) {
     pendingMutation--;
   }
 }
-function requestError(path, text) {
+function requestError(path, text, code) {
   const description = text || t("没有完成", "Could not complete the request");
-  return new Error(window.GaoFixed?.localError(path, description) ?? description);
+  const localized = path.startsWith("/api/csv/review") ? window.GaoCSVReview?.localError(description, code) :
+    window.GaoFixed?.localError(path, description);
+  return new Error(localized ?? description);
 }
 async function refreshIfMonthlyChanged() {
   const generation = state?.monthlyIntegration?.generation;
@@ -206,13 +208,14 @@ function requestQuit() {
       return;
     }
     quitPending = false;
+    const hasDraft = editorDirty || window.GaoCSVReview?.hasDraft();
     document.getElementById("app-exit-title").textContent = t("退出搞积蓄？", "Quit Gao Savings?");
-    document.getElementById("app-exit-text").textContent = editorDirty
+    document.getElementById("app-exit-text").textContent = hasDraft
       ? t("当前编辑尚未保存。可返回编辑保存，或放弃本次修改并退出。",
           "The current edit is unsaved. Return to save it, or discard it and quit.")
       : t("退出将关闭工作台和桌面小组件，并停止后台服务。", "Quitting closes the workbench and widgets and stops the background service.");
-    dialog.querySelector("[data-exit-cancel]").textContent = editorDirty ? t("返回编辑", "Return to edit") : t("取消", "Cancel");
-    dialog.querySelector("[data-exit-confirm]").textContent = editorDirty ? t("放弃并退出", "Discard and quit") : t("退出", "Quit");
+    dialog.querySelector("[data-exit-cancel]").textContent = hasDraft ? t("返回编辑", "Return to edit") : t("取消", "Cancel");
+    dialog.querySelector("[data-exit-confirm]").textContent = hasDraft ? t("放弃并退出", "Discard and quit") : t("退出", "Quit");
     dialog.returnValue = "";
     dialog.showModal();
   }
@@ -310,7 +313,7 @@ function renderToolbar(ready) {
     '<div class="menu-panel">' +
     (ready ? '<button data-workbench="record">' + t("记录收支或转账", "Record income, expense or transfer") + '</button><button data-workbench="savings"' +
       ((state.goals || []).some(goal => goal.status === "active") ? "" : " disabled") + ">" + t("分配一笔积蓄", "Allocate savings") +
-      '</button><hr><button data-workbench="import">' + t("导入流水 CSV", "Import Transactions CSV") + '</button><button data-workbench="export">' +
+      '</button><hr><button data-workbench="import">' + t("导入审核箱", "Import inbox") + '</button><button data-workbench="export">' +
       t("导出流水 CSV", "Export Transactions CSV") + '</button><button data-workbench="widgets">' + t("小组件", "Widgets") + "</button><hr>" : "") +
     (ready ? '<button data-workbench="settings">' + t("设置", "Settings") + "</button>" : "") +
     '<button data-workbench="quit">' + t("退出搞积蓄", "Quit Gao Savings") + "</button></div></details>");
@@ -469,7 +472,7 @@ document.addEventListener("click", event => {
     create: () => api("/api/library/create", {}),
     record: () => window.GaoFinance?.openLedger(),
     savings: () => window.GaoFinance?.openRecord(),
-    import: () => window.GaoFinance?.importCSV(),
+    import: () => window.GaoCSVReview?.open(),
     export: () => window.GaoFinance?.exportCSV(),
     widgets: () => navigate("widgets"),
     settings: openSettings,

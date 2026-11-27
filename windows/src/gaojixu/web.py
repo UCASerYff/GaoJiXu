@@ -11,7 +11,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from gaojixu import adventure, adventure_view, csvutil, finance, finance_views, monthly, monthly_bridge
+from gaojixu import adventure, adventure_view, csv_review, csvutil, finance, finance_views, monthly, monthly_bridge
 from gaojixu.desktop import open_window, valid_target
 from gaojixu.errors import AppError
 from gaojixu.monthly_integration import MonthlyIntegration
@@ -109,6 +109,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(result)
             except AppError as exc:
                 self._json({"error": exc.message, "code": exc.code}, 400)
+            return
+        if parsed.path in {"/api/csv/review", "/api/csv/review/detail"}:
+            if not self._authorized():
+                return
+            try:
+                with self.server.lock:
+                    if parsed.path == "/api/csv/review":
+                        result = csv_review.list_batches(self.server.store)
+                    else:
+                        batch_id = parse_qs(parsed.query).get("batchID", [""])[0]
+                        result = csv_review.detail(self.server.store, batch_id)
+                self._json(result)
+            except AppError as exc:
+                self._json({"ok": False, "error": exc.message, "code": exc.code}, 400)
             return
         if parsed.path == "/api/catalog":
             if not self._authorized():
@@ -417,6 +431,12 @@ def dispatch(store: Store, path: str, payload: dict):
         return store.import_ledger(payload.get("text") or "")
     if path == "/api/csv/preview":
         return csvutil.preview_ledger(store, payload.get("text") or "")
+    if path == "/api/csv/review/stage":
+        return csv_review.stage(store, payload)
+    if path == "/api/csv/review/apply":
+        return csv_review.apply(store, payload)
+    if path == "/api/csv/review/undo":
+        return csv_review.undo(store, payload)
     raise AppError("没有这个操作。", "invalid")
 
 

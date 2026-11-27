@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import ctypes
 import hashlib
 import json
@@ -19,6 +20,7 @@ import time
 import uuid
 import winreg
 from contextlib import closing, contextmanager
+from io import StringIO
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
@@ -560,6 +562,42 @@ def exercise_monthly_signal(request, profile: Path, cli: Path, env: dict[str, st
         time.sleep(.1)
 
 
+def exercise_csv_review(executable: Path, profile: Path, env: dict[str, str]) -> None:
+    endpoint = "/api/csv/review"
+    note = "MSI synthetic CSV review"
+    with installed_app(executable, profile, env) as request:
+        state = json.loads(request("/api/state"))
+        account = next(row for row in state["accounts"] if row["currency"] == "CNY")
+        source = StringIO()
+        csv.writer(source, lineterminator="\n").writerows([
+            ["日期", "类型", "账户", "目标账户", "分类", "备注", "金额", "币种"],
+            ["2026-10-03T12:30:00+08:00", "支出", account["name"], "", "餐饮", note, "18.75", "CNY"],
+        ])
+        staged = json.loads(request(endpoint + "/stage", {"text": source.getvalue(), "name": "synthetic.csv"}))
+        assert staged["ok"] and len(staged["result"]["rows"]) == 1
+        batch_id = staged["result"]["batch"]["id"]
+        assert staged["result"]["batch"]["status"] == "pending"
+        row_id = staged["result"]["rows"][0]["id"]
+        assert not any(row["note"] == note for row in json.loads(request("/api/state"))["entries"])
+
+    with installed_app(executable, profile, env) as request:
+        review = json.loads(request(endpoint + "/detail?batchID=" + batch_id))
+        assert review["batch"]["id"] == batch_id and review["rows"][0]["id"] == row_id
+        assert review["batch"]["status"] == "pending" and review["rows"][0]["canApply"]
+        assert not any(row["note"] == note for row in json.loads(request("/api/state"))["entries"])
+        command = {"batchID": batch_id, "revision": review["batch"]["revision"], "decisions": {row_id: "apply"},
+                   "pairs": [], "overrideDuplicates": [], "confirmed": True}
+        saved = json.loads(request(endpoint + "/apply", command))
+        repeated = json.loads(request(endpoint + "/apply", command))
+        assert saved["ok"] and repeated["ok"]
+        assert saved["result"]["batch"]["status"] == "applied"
+        assert repeated["result"]["rows"][0]["entryID"] == saved["result"]["rows"][0]["entryID"]
+        entries = [row for row in json.loads(request("/api/state"))["entries"] if row["note"] == note]
+        entry, = entries
+        assert entry["accountID"] == account["id"] and entry["amount"] == 18.75
+    print("MSI CSV review passed: draft survived restart and repeated confirmation wrote one entry")
+
+
 def data_manifest(directory: Path) -> dict[Path, bytes]:
     result = {}
     for path in directory.rglob("*"):
@@ -600,6 +638,7 @@ def smoke(package: Path, legacy: Path | None, register_shell: bool, upgrade_from
     version_parts = tuple(map(int, product_version.split(".")))
     supports_integration = version_parts >= (4, 6, 3)
     redesigned = version_parts >= (4, 6, 4)
+    reviews_csv = version_parts >= (4, 6, 6)
     upgrade_code = msi_property(package, "UpgradeCode")
     if isolate_identities and register_shell:
         raise ValueError("An isolated MSI test may not register the production Shell entries.")
@@ -687,6 +726,8 @@ def smoke(package: Path, legacy: Path | None, register_shell: bool, upgrade_from
             integration_cli = cli if supports_integration else None
             exercise_installed_app(app, profile, library, env, existing=bool(upgrade_from),
                                    integration_cli=integration_cli, redesigned=redesigned)
+            if reviews_csv:
+                exercise_csv_review(app, profile, env)
             exercise_protected_library(app, root / "只读验证", env)
             data_hashes = data_manifest(profile)
             if upgrade_from:
