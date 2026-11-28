@@ -65,10 +65,6 @@
                       Arguments="--widget expenses" WorkingDirectory="INSTALLFOLDER" Icon="GaoJiXuIcon.ico" IconIndex="0">
               <ShortcutProperty Key="System.AppUserModel.ID" Value="$(var.AppUserModelId)" />
             </Shortcut>
-            <Shortcut Id="BenefitsShortcut" Name="搞积蓄 - 权益打卡" Target="[INSTALLFOLDER]GaoJiXu.exe"
-                      Arguments="--widget benefits" WorkingDirectory="INSTALLFOLDER" Icon="GaoJiXuIcon.ico" IconIndex="0">
-              <ShortcutProperty Key="System.AppUserModel.ID" Value="$(var.AppUserModelId)" />
-            </Shortcut>
             <Shortcut Id="AdventureShortcut" Name="搞积蓄 - 勇者冒险" Target="[INSTALLFOLDER]GaoJiXu.exe"
                       Arguments="--widget adventure" WorkingDirectory="INSTALLFOLDER" Icon="GaoJiXuIcon.ico" IconIndex="0">
               <ShortcutProperty Key="System.AppUserModel.ID" Value="$(var.AppUserModelId)" />

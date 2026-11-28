@@ -13,7 +13,7 @@ from gaojixu.desktop_widgets import DesktopWidgets, TYPES
 from gaojixu.errors import AppError
 from gaojixu.monthly_notices import MonthlyNotices
 from gaojixu.store import Store
-from gaojixu.web import dispatch, serve
+from gaojixu.web import serve
 
 
 class TestWindows:
@@ -127,7 +127,7 @@ def test_desktop_widget_pin_restore_duplicate_and_close(tmp_path):
         windows.positions[handle] = [40 * handle, 35 * handle, 500 + 40 * handle, 400 + 35 * handle]
         assert not manager.request({"command": "status", "widget": widget, "lease": "unknown"}, lambda _: None)["currentAttached"]
         assert manager.request({"command": "status", "widget": widget, "lease": window.lease}, lambda _: None)["currentAttached"]
-    assert len(launches) == 5
+    assert len(launches) == 4
     kinds = {kind: window.lease for kind, window in manager._active.items()}
     for name in ("calendar", "expenses"):
         request = {"command": "pin", "widget": name, "lease": kinds[name], "pinned": True}
@@ -137,7 +137,7 @@ def test_desktop_widget_pin_restore_duplicate_and_close(tmp_path):
     routes = []
     manager.request({"command": "route", "widget": "expenses", "lease": kinds["expenses"]}, routes.append)
     assert routes == ["fixed-expenses"]
-    assert manager.open("calendar")["open"] and windows.foreground == 1 and len(launches) == 5
+    assert manager.open("calendar")["open"] and windows.foreground == 1 and len(launches) == 4
     manager.request({"command": "close", "widget": "expenses", "lease": kinds["expenses"]}, lambda _: None)
     manager.close()
     assert not windows.windows
@@ -204,11 +204,12 @@ def test_desktop_api_auth_secondary_launch_and_notification(tmp_path, monkeypatc
         with pytest.raises(HTTPError) as error:
             post("api/desktop/widgets", {"command": "open", "widget": "calendar"}, "bogus")
         assert error.value.code == 403
-        assert not forward_target(server.url, "?widget=benefits", "another-profile")
-        assert not forward_target(server.url, "?widget=benefits#unknown", server.instance_key)
+        assert not forward_target(server.url, "?widget=expenses", "another-profile")
+        assert not forward_target(server.url, "?widget=expenses#unknown", server.instance_key)
+        assert not forward_target(server.url, "?widget=benefits", server.instance_key)
         assert not launches
-        assert forward_target(server.url, "?widget=benefits", server.instance_key)
-        assert len(launches) == 1 and "widget=benefits" in launches[0][-1]
+        assert forward_target(server.url, "?widget=expenses", server.instance_key)
+        assert len(launches) == 1 and "widget=expenses" in launches[0][-1]
         assert {"submitted": True} == post("api/desktop/notification-test", {"language": "en"}, server.token)["result"]
         assert notifications[0][0] == "Gao Savings · Notification test"
         with pytest.raises(HTTPError) as error:
@@ -227,21 +228,21 @@ def test_desktop_api_auth_secondary_launch_and_notification(tmp_path, monkeypatc
         server.server_close()
 
 
-def test_widget_stale_business_timezone_blocks_claim(tmp_path):
-    now = datetime(2026, 11, 27, 10, tzinfo=timezone.utc)
-    store = Store(tmp_path, tz=timezone.utc, now=lambda: now)
-    store.create_library()
-    store.create_monthly()
-    monthly.update_preferences(tmp_path, {"timezone": "Asia/Shanghai"}, store.now)
-    monthly.save_subscription(tmp_path, {"name": "临时权益", "price": 25, "benefit": "daily"}, store.now)
-    benefit, = store.snapshot()["monthly"]["benefits"]
-    with pytest.raises(AppError):
-        dispatch(store, "/api/monthly/claim", {
-            "id": benefit["id"], "periodKey": benefit["periodKey"], "expectedTimezone": "UTC",
-        })
-    assert dispatch(store, "/api/monthly/claim", {
-        "id": benefit["id"], "periodKey": benefit["periodKey"], "expectedTimezone": "Asia/Shanghai",
-    })["claimed"]
+def test_prior_layout_ignores_retired_benefits_widget(tmp_path):
+    layout = tmp_path / "layout.json"
+    position = {"open": True, "pinned": True, "rect": [40, 40, 440, 440]}
+    original = {"version": 1, "windows": {"benefits": position, "expenses": position}}
+    layout.write_text(json.dumps(original), encoding="utf-8")
+    launches = []
+    manager = DesktopWidgets("http://127.0.0.1:5000/", tmp_path, "chrome.exe", TestWindows(),
+                             launch=lambda options, **_kw: launches.append(options))
+    try:
+        manager.restore()
+        status = manager.request({"command": "status"}, lambda _: None)
+        assert set(status["windows"]) == {"calendar", "net-worth", "expenses", "adventure"}
+        assert len(launches) == 1 and "widget=expenses" in launches[0][-1]
+    finally:
+        manager.close()
 
 
 def test_unsubmitted_reminder_is_resampled_after_privacy_change(tmp_path):

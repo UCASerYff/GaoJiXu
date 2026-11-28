@@ -24,12 +24,12 @@ def test_workspace_navigation() -> None:
     require("researchFunding" not in navigation, "科研栏目映射仍残留")
     for section in (
         "overview", "ledger", "accounts", "budgets", "reports", "goals", "records",
-        "analytics", "fixedIncome", "fixedExpenses", "benefits", "adventure",
+        "analytics", "fixedIncome", "fixedExpenses", "adventure",
     ):
         require(f".{section}" in navigation, f"工作区未映射原栏目 {section}")
     for route in (
         'case "ledger"', 'case "overview"', 'case "budgets"', 'case "fixed-income"',
-        'case "fixed-expenses", "today"', 'case "benefits"',
+        'case "fixed-expenses", "today", "benefits": selection = .fixedExpenses',
     ):
         require(route in content, f"旧深链分支被移除：{route}")
     require('case "research-funding"' not in content, "科研深链仍残留")
@@ -50,6 +50,29 @@ def test_workspace_navigation() -> None:
     migration = text("Sources/FinanceIntegrationMigration.swift")
     for forbidden in ("ResearchInput", "ResearchFunding", "targetResearchDirectory"):
         require(forbidden not in migration, f"科研迁移仍残留：{forbidden}")
+
+
+def test_retired_benefits_entry_points() -> None:
+    content = text("Sources/ContentView.swift")
+    sections = text("Sources/Models.swift")
+    navigation = text("Sources/WorkspaceNavigation.swift")
+    monthly = text("Sources/MonthlyFinanceViews.swift") + text("Sources/MonthlyFinanceEditors.swift")
+    bundle = text("Widgets/GaoJiXuWidgets.swift")
+    expense_widget = text("Widgets/IntegratedFinanceWidgets.swift")
+    require('@SceneStorage("gqns.page.Savings")' in content, "现有场景记忆键被更改")
+    require("SavingsSection.restoring(storedSection)" in content, "场景记忆未经过兼容入口")
+    require('value == "benefits" ? .fixedExpenses' in sections, "旧权益场景未回落固定支出")
+    require(".benefits" not in sections + navigation + content, "旧权益栏目仍可选")
+    for kept in ("SavingsSection.fixedIncome", "SavingsSection.fixedExpenses"):
+        require(f".tag({kept})" in navigation, f"固定收支切换丢失入口 {kept}")
+    for retired in ("MonthlyBenefitsView", "MonthlyFinanceClaimHistory", "MonthlyFinanceBenefitEditor"):
+        require(retired not in monthly, f"旧权益界面仍残留 {retired}")
+    for kept in ("MonthlyFinanceCalendarWidget()", "NetWorthWidget()", "SavingsFixedExpenseWidget()"):
+        require(kept in bundle, f"保留的小组件未注册 {kept}")
+    for kept in ('"GaoJiXuFixedExpense"', '"gaojixu://fixed-expenses"'):
+        require(kept in expense_widget, f"固定支出小组件入口发生变化 {kept}")
+    for retired in ("SavingsMonthlyBenefitsWidget", "GaoJiXuMonthlyBenefits", "SavingsClaimBenefitIntent"):
+        require(retired not in bundle + expense_widget, f"旧权益小组件入口仍残留 {retired}")
 
 
 def test_visual_system() -> None:
@@ -108,6 +131,7 @@ def test_backup_removal() -> None:
 
 def main() -> None:
     test_workspace_navigation()
+    test_retired_benefits_entry_points()
     test_visual_system()
     test_records_and_editors()
     test_backup_removal()

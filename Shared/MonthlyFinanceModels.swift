@@ -17,16 +17,10 @@ enum MonthlyFinanceCycle: String, Codable, CaseIterable, Identifiable {
     return a[Self.allCases.firstIndex(of: self)!]
   }
 }
-enum MonthlyFinanceBenefit: String, Codable, CaseIterable {
+enum MonthlyFinanceBenefit: String, Codable {
   case none, daily, weekly
-  func title(_ en: Bool) -> String {
-    en
-      ? ["none": "None", "daily": "Daily", "weekly": "Weekly"][rawValue]!
-      : ["none": "无权益打卡", "daily": "每日权益", "weekly": "每周权益"][rawValue]!
-  }
 }
-/// 独立权益（V0.5）：与订阅平级的打卡对象，可关联订阅也可独立存在（如游戏每日登录奖励）。
-/// 迁移时复用所属订阅的 UUID，使历史打卡键 "id|kind|period" 与奖励键保持兼容。
+/// Retained to round-trip existing monthly records and their links when a subscription is removed.
 struct MonthlyFinanceBenefitItem: Codable, Identifiable, Equatable {
   var id = UUID()
   var name = ""
@@ -47,6 +41,7 @@ struct MonthlyFinancePlan: Codable, Identifiable, Equatable {
   var cycle: MonthlyFinanceCycle = .monthly
   var interval = 30
   var monthEnd = false
+  /// Legacy monthly snapshots stored benefit metadata on a plan.
   var benefit: MonthlyFinanceBenefit = .none
 }
 struct MonthlyFinanceSubscription: Codable, Identifiable, Equatable {

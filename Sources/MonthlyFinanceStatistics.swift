@@ -57,7 +57,7 @@ struct MonthlyFinanceStatisticsView: View {
       }
       Divider()
       Text("订阅使用回顾").font(.headline)
-      Text("有关联权益时，使用状态从已完成周期的领取率估计；没有权益时，参考月度自评。数据不足不会自动建议取消。").font(.caption).foregroundStyle(
+      Text("使用状态根据月度自评显示。连续两个完整月自评为较少使用时，可回顾是否续费。").font(.caption).foregroundStyle(
         .secondary)
       let subs = state.subscriptions.filter { $0.current.currency == currency }.sorted {
         $0.name < $1.name

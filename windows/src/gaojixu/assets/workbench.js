@@ -11,9 +11,9 @@ const sections = {
   ledger: ["流水", "Transactions"], accounts: ["账户", "Accounts"], budgets: ["预算", "Budgets"], reports: ["报表", "Reports"],
   "fixed-income": ["固定收支", "Recurring"], goals: ["攒钱目标", "Goals"], records: ["积蓄记录", "Records"], analytics: ["趋势", "Analytics"]
 };
-const fixedRoutes = [["fixed-income", "固定收入", "Income"], ["fixed-expenses", "固定支出", "Expenses"], ["benefits", "权益", "Benefits"]];
+const fixedRoutes = [["fixed-income", "固定收入", "Income"], ["fixed-expenses", "固定支出", "Expenses"]];
 const query = new URLSearchParams(location.search);
-const gallery = query.get("widget");
+const gallery = query.get("widget") === "benefits" ? "expenses" : query.get("widget");
 const lease = /^[a-f0-9]{32}$/.test(query.get("workbench") ?? "") ? query.get("workbench") : "";
 const desktopMarker = lease ? " [GJX:" + lease + "]" : "";
 let desktopAttached = false;
@@ -37,6 +37,10 @@ function updateMarkup(node, markup) {
 
 function routeFromHash() {
   const candidate = location.hash.slice(1);
+  if (candidate === "benefits") {
+    history.replaceState(null, "", "#fixed-expenses");
+    return "fixed-expenses";
+  }
   const section = candidate && document.getElementById(candidate);
   return section?.tagName === "SECTION" && section.parentElement?.id === "workbench" ? candidate : "overview";
 }

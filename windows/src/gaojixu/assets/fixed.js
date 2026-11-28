@@ -17,7 +17,6 @@
     ["请填写订阅名称。", "Enter the subscription name."],
     ["扣费周期无法识别。", "Choose a valid billing cycle."],
     ["周期间隔无效。", "The billing interval is invalid."],
-    ["权益类型无法识别。", "The benefit type is invalid."],
     ["这项订阅已变化。", "This subscription has changed. Refresh and try again."],
     ["变更生效日不能早于当前计划开始日。", "The effective date cannot precede the current plan."],
     ["取消日期不能是未来日期。", "The cancellation date cannot be in the future."],
@@ -28,13 +27,6 @@
     ["本账期已变化，请重新选择。", "This billing period has changed. Select it again."],
     ["这一期已经记过，没有重复入账。", "This billing period already has a payment record."],
     ["覆盖期数应在 1 到 120 之间。", "Enter between 1 and 120 periods."],
-    ["请填写权益名称，并选择每日或每周。", "Enter a benefit name and select daily or weekly."],
-    ["关联的订阅不存在。", "The linked subscription could not be found."],
-    ["这项权益已变化。", "This benefit has changed. Refresh and try again."],
-    ["没有这项权益。", "This benefit could not be found."],
-    ["不能补记未来的权益。", "Claims cannot be recorded for future dates."],
-    ["对应日期的权益不可记录。", "The benefit cannot be recorded for the selected date."],
-    ["领取周期已变化，请刷新后重试。", "The claim period has changed. Refresh and try again."],
     ["记录类型无法识别。", "The record type is invalid."],
     ["记录已变化。", "This record has changed. Refresh and try again."],
     ["记录操作无效。", "This operation is unavailable for the record."],
@@ -62,7 +54,6 @@
     ["原流水已删除，保留确认记录", "Original transaction deleted; receipt retained"],
     ["已入账", "Recorded"],
     ["原流水已调整", "Original transaction edited"],
-    ["数据不足", "Insufficient history"],
     ["较少使用", "Rarely used"],
     ["偶尔使用", "Sometimes used"],
     ["经常使用", "Often used"],
@@ -75,12 +66,10 @@
   const cycles = () => [["weekly",t("每周","Weekly")],["monthly",t("每月","Monthly")],["quarterly",t("每季","Quarterly")],["yearly",t("每年","Yearly")],["days",t("自定义天数","Custom days")]];
   const accruingCurrencies = ["CNY","USD","EUR","HKD","JPY","GBP"];
   const expenseTabs = () => [["subscription",t("订阅","Subscription")],["bills",t("待核实账期","Upcoming and unverified")],["payments",t("支付历史","Payment history")],["events",t("到期事项","Deadlines")],["review",t("统计与复盘","Spending and review")]];
-  const benefitKinds = () => [["daily",t("每日","Daily")],["weekly",t("每周","Weekly")]];
   let incomeMonth = "";
   let expenseTab = "subscription";
   let filter = "";
   let showArchivedSubs = false;
-  let showArchivedBenefits = false;
   let count = 30;
   let statisticsCurrency = "CNY";
 
@@ -133,9 +122,6 @@
       if (event.target.id === "fixed-archive-subs") {
         showArchivedSubs = event.target.checked;
         render("fixed-expenses");
-      } else if (event.target.id === "fixed-archive-benefits") {
-        showArchivedBenefits = event.target.checked;
-        render("benefits");
       } else if (event.target.id === "fixed-statistics-currency") {
         statisticsCurrency = event.target.value;
         render("fixed-expenses");
@@ -308,9 +294,8 @@
           field(sub ? "effective" : "start",sub ? t("计划变更生效日","Plan change effective date") : t("计划开始日","Plan start date"),now,'type="date" required')) +
         group(t("试用、取消和提醒","Trial, cancellation and reminders"),field("trialEnd",t("试用截止","Trial ends"),sub?.trialEnd,'type="date"') + checkbox("trialResolved",t("试用已处理","Trial resolved"),sub?.trialResolved) +
           field("cancelDeadline",t("取消截止","Cancel by"),sub?.cancelDeadline,'type="date"') + field("cancelledAt",t("取消日期","Cancellation date"),sub?.cancelledAt,'type="date" max="' + now + '"') +
-          field("serviceEnd",t("权益服务截止日期","Benefits end date"),sub?.serviceEnd,'type="date"') +
           field("reminderDays",t("专属提前提醒天数","Days in advance for this subscription"),sub?.reminderDays,'type="number" min="0" max="365"')),
-      prepare:payload => Object.assign(payload,{id:sub?.id,benefit:sub?.benefit || "none"})
+      prepare:payload => payload.id = sub?.id
     });
   }
   function editPayment(bill, prior) {
@@ -446,58 +431,6 @@
       prepare:payload => payload.subscriptionID = sub.id
     });
   }
-  function renderBenefits(root, monthly) {
-    const writable = monthly.status === "ready";
-    const visible = monthly.benefits.filter(benefit => showArchivedBenefits || !benefit.archived);
-    const active = monthly.benefits.filter(benefit => !benefit.archived && benefit.periodKey);
-    const checked = active.filter(benefit => benefit.claimed).length;
-    const controls = checkbox("archived",t("含归档","Include archived"),showArchivedBenefits,'id="fixed-archive-benefits"');
-    mount(root, header(t("权益打卡","Benefits"),t("记录已在服务方领取的权益。","Track benefits claimed on their services."),
-      action("benefit-edit",icon("plus") + t("新增权益","New benefit"),"",true,!writable)) +
-      (writable ? "" : '<div class="banner">' + e(message(monthly.notice)) + "</div>") +
-      listing(t("本期权益","Current benefits"),
-        visible.map(benefit => item(benefit.name, (benefit.kind === "weekly" ? t("每周权益","Weekly benefit") : t("每日权益","Daily benefit")) + " · " +
-          e(subById(benefit.subscriptionID)?.name || t("独立权益","Standalone benefit")),
-          benefit.archived ? statusTag(t("已归档","Archived")) : benefit.claimed ? statusTag(t("本期已记","Recorded this period"),"positive") :
-            benefit.periodKey ? statusTag(t("待打卡","To record"),"expected") : statusTag(t("暂不可记录","Unavailable")),
-          (!benefit.claimed && benefit.periodKey && !benefit.archived ?
-              action("benefit-claim",t("标记已领取","Mark claimed"),benefit.id,true,!writable) : "") +
-          action("benefit-history",t("历史 / 补记","History and backfill"),benefit.id) +
-          itemMenu(action("benefit-edit",t("编辑","Edit"),benefit.id,false,!writable) + action("benefit-delete",t("删除","Delete"),benefit.id,false,!writable)))).join("") ||
-        empty(t("暂无权益，可新建独立权益或关联订阅。","No benefits yet. Create a standalone benefit or link one to a subscription.")),
-        '<div class="row fixed-list-tools"><span class="muted">' + (active.length ? checked + "/" + active.length + t(" 已记录"," recorded") : "") +
-        "</span>" + controls + "</div>"));
-  }
-  function editBenefit(benefit) {
-    formEditor({
-      title:benefit ? t("编辑权益","Edit benefit") : t("新增权益","New benefit"), path:"/api/monthly/benefit",
-      body:group(t("权益信息","Benefit details"),field("name",t("权益名称","Benefit name"),benefit?.name,"required") + pick("kind",t("领取周期","Claim interval"),benefitKinds(),benefit?.kind || "daily") +
-        pick("subscriptionID",t("关联订阅","Linked subscription"),subsChoices(t("独立权益","Standalone benefit")),benefit?.subscriptionID || "") + field("note",t("备注","Note"),benefit?.note) +
-        checkbox("archived",t("已归档","Archived"),benefit?.archived)),
-      prepare:payload => payload.id = benefit?.id
-    });
-  }
-  function historyEditor(benefit) {
-    const monthly = state.monthly;
-    const history = monthly.claims.filter(claim => claim.id.toLowerCase().startsWith(benefit.id.toLowerCase() + "|"))
-      .sort((a,b) => b.date.localeCompare(a.date));
-    const writable = monthly.status === "ready" && !benefit.archived;
-    openEditor({
-      title:benefit.name + t(" · 领取历史"," · Claim history"), submitLabel:t("补记领取","Backfill claim"),
-      body:(writable ? group(t("按实际日期补记","Record a past claim"),field("date",t("实际领取日期","Actual claim date"),monthly.today,'required type="date" max="' + monthly.today + '"')) : "") +
-        group(t("历史记录","History"),history.map(claim => row(claim.date,claim.backfill ? t("补记","Backfill") : t("已领取","Claimed"),
-          action("claim-delete",t("撤销","Undo"),claim.id,false,!writable))).join("") || empty(t("暂无历史记录。","No claim history."))),
-      onOpen: form => form.querySelectorAll("[data-fixed]").forEach(button => button.onclick = event => {
-        event.stopPropagation();
-        change("claims","delete",button.dataset.id,t("撤销这次领取记录？","Undo this claim record?")).then(() => historyEditor(benefit)).catch(showError);
-      }),
-      onSubmit:writable ? async form => {
-        await api("/api/monthly/claim",{id:benefit.id,date:form.elements.date.value});
-        historyEditor(benefit);
-        return false;
-      } : null
-    });
-  }
   async function change(collection, operation, id, confirmation) {
     const revision = state.monthly.revision;
     if (confirmation && !(await confirmAction(confirmation))) return;
@@ -511,7 +444,6 @@
     const id = button.dataset.id;
     const monthly = state.monthly;
     const plan = state.fixedIncome.plans.find(plan => plan.id === id);
-    const benefit = monthly.benefits.find(item => item.id === id);
     const actions = {
       reload:() => refresh(),
       "create-monthly":async () => {
@@ -542,10 +474,6 @@
       "event-edit":() => eventEditor(monthly.events.find(event => event.id === id)),
       "event-toggle":() => change("events","toggle",id),
       "event-delete":() => change("events","delete",id,t("删除这个到期事项？","Delete this deadline?")),
-      "benefit-edit":() => editBenefit(benefit),
-      "benefit-claim":() => api("/api/monthly/claim",{id,periodKey:benefit.periodKey}),
-      "benefit-history":() => historyEditor(benefit),
-      "benefit-delete":() => change("benefits","delete",id,t("删除该权益及领取历史？","Delete this benefit and its claim history?")),
       "review-edit":() => reviewEditor(subById(id))
     };
     Promise.resolve().then(actions[button.dataset.fixed]).catch(showError);
@@ -555,7 +483,6 @@
     const monthly = state.monthly;
     if (section === "fixed-income") return renderIncome(root);
     if (!["ready","readonly"].includes(monthly.status)) return unavailable(root,monthly);
-    if (section === "benefits") return renderBenefits(root,monthly);
     return renderExpenses(root,monthly);
   }
   function reconciliation() {

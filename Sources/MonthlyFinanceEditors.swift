@@ -56,8 +56,6 @@ struct MonthlyFinanceSubscriptionEditor: View {
   @State private var deadline: Date
   @State private var cancelled: Bool
   @State private var cancelDate: Date
-  @State private var serviceEnabled: Bool
-  @State private var serviceEnd: Date
   @State private var customReminder: Bool
   @State private var advance: Int
   @State private var monthReview: Int
@@ -77,8 +75,6 @@ struct MonthlyFinanceSubscriptionEditor: View {
     _deadline = State(initialValue: s.cancelDeadline ?? Date())
     _cancelled = State(initialValue: s.cancelledAt != nil)
     _cancelDate = State(initialValue: s.cancelledAt ?? Date())
-    _serviceEnabled = State(initialValue: s.serviceEnd != nil)
-    _serviceEnd = State(initialValue: s.serviceEnd ?? Date())
     _customReminder = State(initialValue: s.reminderDays != nil)
     _advance = State(initialValue: s.reminderDays ?? state.preferences.reminderDays)
     _reviewMonth = State(initialValue: Date())
@@ -117,7 +113,7 @@ struct MonthlyFinanceSubscriptionEditor: View {
           DatePicker("计划开始日", selection: $plan.start, displayedComponents: .date)
         }
       }
-      Section("试用、服务与提醒") {
+      Section("试用、取消与提醒") {
         Toggle("订阅有试用期", isOn: $trial)
         if trial {
           DatePicker("试用截止", selection: $trialEnd, displayedComponents: .date)
@@ -129,8 +125,6 @@ struct MonthlyFinanceSubscriptionEditor: View {
         if cancelled {
           DatePicker("取消日期", selection: $cancelDate, in: ...Date(), displayedComponents: .date)
         }
-        Toggle("指定权益服务截止日期", isOn: $serviceEnabled)
-        if serviceEnabled { DatePicker("服务截止", selection: $serviceEnd, displayedComponents: .date) }
         Toggle("使用专属提前提醒", isOn: $customReminder)
         if customReminder { Stepper("提前 \(advance) 天", value: $advance, in: 0...3650) }
       }
@@ -179,7 +173,6 @@ struct MonthlyFinanceSubscriptionEditor: View {
       d.reminderDays = customReminder ? advance : nil
       d.trialEnd = trial ? trialEnd : nil
       d.cancelDeadline = deadlineEnabled ? deadline : nil
-      d.serviceEnd = serviceEnabled ? serviceEnd : nil
       d.cancelledAt = cancelled ? cancelDate : nil
       if cancelled && existing?.cancelledAt == nil {
         d.cancelIntent = false
@@ -246,41 +239,6 @@ struct MonthlyFinancePaymentEditor: View {
     }
   }
 }
-struct MonthlyFinanceBenefitEditor: View {
-  let existing: MonthlyFinanceBenefitItem?, state: MonthlyFinanceState
-  @ObservedObject private var store = MonthlyFinanceStore.shared
-  @State private var draft: MonthlyFinanceBenefitItem
-  init(existing: MonthlyFinanceBenefitItem?, state: MonthlyFinanceState) {
-    self.existing = existing
-    self.state = state
-    _draft = State(initialValue: existing ?? MonthlyFinanceBenefitItem())
-  }
-  var body: some View {
-    MonthlyFinanceEditorFrame(title: existing == nil ? "新增权益" : "编辑权益", save: save) {
-      TextField("权益名称", text: $draft.name)
-      Picker("领取周期", selection: $draft.kind) {
-        Text("每日").tag(MonthlyFinanceBenefit.daily)
-        Text("每周").tag(MonthlyFinanceBenefit.weekly)
-      }
-      Picker("关联订阅", selection: $draft.subscriptionID) {
-        Text("独立权益").tag(Optional<UUID>.none)
-        ForEach(state.subscriptions) { Text($0.name).tag(Optional($0.id)) }
-      }
-      TextField("备注", text: $draft.note)
-      Toggle("已归档", isOn: $draft.archived)
-    }
-  }
-  private func save() -> Bool {
-    store.update { s in
-      guard !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-        throw MonthlyFinanceError("请输入权益名称。")
-      }
-      let i = s.benefits.firstIndex { $0.id == draft.id }
-      guard i.map({ s.benefits[$0] }) == existing else { throw MonthlyFinanceError("权益已变化，请重新编辑。") }
-      if let i { s.benefits[i] = draft } else { s.benefits.append(draft) }
-    }
-  }
-}
 struct MonthlyFinanceEventEditor: View {
   let existing: MonthlyFinanceEvent?, state: MonthlyFinanceState
   @ObservedObject private var store = MonthlyFinanceStore.shared
@@ -319,7 +277,7 @@ struct MonthlyFinanceSettingsEditor: View {
   }
   var body: some View {
     MonthlyFinanceEditorFrame(
-      title: "固定支出与权益设置",
+      title: "固定支出提醒设置",
       save: {
         store.update { s in
           guard s.preferences == original else { throw MonthlyFinanceError("设置已变化。") }
@@ -335,7 +293,7 @@ struct MonthlyFinanceSettingsEditor: View {
       }
       Stepper("默认提前 \(prefs.reminderDays) 天", value: $prefs.reminderDays, in: 0...3650)
       Stepper("提醒时刻：\(prefs.reminderHour) 时", value: $prefs.reminderHour, in: 0...23)
-      Text("日/周权益按保存的业务时区判断是否已领。系统通知需本应用单独获准。").font(.caption).foregroundStyle(.secondary)
+      Text("提醒按保存的业务时区排程，系统通知需要为本应用授权。").font(.caption).foregroundStyle(.secondary)
     }
   }
 }

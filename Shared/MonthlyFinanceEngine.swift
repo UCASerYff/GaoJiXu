@@ -166,31 +166,6 @@ enum MonthlyFinanceEngine {
       c.startOfDay(for: $0.start) <= d && ($0.end == nil || d < c.startOfDay(for: $0.end!))
     }
   }
-  /// 权益打卡键："<权益ID>|<daily/weekly>|<周期起始日>"。
-  /// 关联订阅的权益在订阅归档或服务期结束后不再可打卡（与 V0.4 行为一致）；
-  /// 独立权益（无关联订阅）只要未归档就可打卡。
-  static func claimKey(
-    _ benefit: MonthlyFinanceBenefitItem, _ s: MonthlyFinanceState, on date: Date
-  ) -> String? {
-    guard !benefit.archived, benefit.kind != .none else { return nil }
-    if let subID = benefit.subscriptionID {
-      guard let sub = s.subscriptions.first(where: { $0.id == subID }), !sub.archived,
-        activePlan(sub, s, on: date) != nil
-      else { return nil }
-    }
-    let c = calendar(s)
-    let start =
-      benefit.kind == .weekly
-      ? c.dateInterval(of: .weekOfYear, for: date)!.start : c.startOfDay(for: date)
-    return "\(benefit.id)|\(benefit.kind.rawValue)|\(day(start,s))"
-  }
-  static func dueBenefits(_ s: MonthlyFinanceState, now: Date = Date())
-    -> [MonthlyFinanceBenefitItem]
-  {
-    s.benefits.filter { benefit in
-      claimKey(benefit, s, on: now).map { key in !s.claims.contains { $0.id == key } } == true
-    }
-  }
 }
 
 extension MonthlyFinanceEngine {
@@ -302,6 +277,7 @@ extension MonthlyFinanceEngine {
         plan.id = UUID()
         plan.start = day
         plan.end = nil
+        plan.benefit = .none
         sub.plans.append(plan)
       }
       sub.updatedAt = now
@@ -319,6 +295,7 @@ extension MonthlyFinanceEngine {
   ) throws {
     guard s.subscriptions.contains(expected) else { throw MonthlyFinanceError("订阅已变化。") }
     let id = expected.id
+    // Retained benefit claims keep their benefit owner when the subscription is deleted.
     let detached = s.benefits.filter { $0.subscriptionID == id }
     s.subscriptions.removeAll { $0.id == id }
     s.payments.removeAll { $0.subscriptionID == id }
@@ -376,90 +353,22 @@ extension MonthlyFinanceEngine {
           periods: skipped ? nil : periods))
     }
   }
-  /// A Widget button belongs to the period it displayed. A stale button cannot claim a later one.
-  static func claimPresented(_ s: inout MonthlyFinanceState, benefitID: UUID,
-    expectedPeriodKey: String, expectedTimezone: String, now: Date = Date()) throws {
-    guard s.preferences.timezone == expectedTimezone,
-      let benefit = s.benefits.first(where: { $0.id == benefitID }),
-      claimKey(benefit, s, on: now) == expectedPeriodKey
-    else { throw MonthlyFinanceError("权益周期或设置已变化，请刷新小组件后重试。") }
-    try claim(&s, benefitID: benefitID, date: now, now: now)
-  }
-  static func claim(_ s: inout MonthlyFinanceState, benefitID: UUID, date: Date, now: Date = Date())
-    throws
-  {
-    let c = calendar(s)
-    guard c.startOfDay(for: date) <= c.startOfDay(for: now),
-      let b = s.benefits.first(where: { $0.id == benefitID }), let key = claimKey(b, s, on: date)
-    else { throw MonthlyFinanceError("当日没有可领取权益。") }
-    guard !s.claims.contains(where: { $0.id == key }) else { return }
-    s.claims.append(
-      .init(
-        id: key, subscriptionID: b.subscriptionID ?? b.id, date: date, recordedAt: now,
-        backfill: day(date, s) != day(now, s)))
-  }
-  static func removeBenefit(_ s: inout MonthlyFinanceState, expected: MonthlyFinanceBenefitItem)
-    throws
-  {
-    guard s.benefits.contains(expected) else { throw MonthlyFinanceError("权益已变更。") }
-    s.benefits.removeAll { $0.id == expected.id }
-    s.claims.removeAll { $0.id.hasPrefix("\(expected.id)|") }
-    s.tombstones.insert("deleted-benefit|\(expected.id)")
-  }
 }
 
 extension MonthlyFinanceEngine {
   struct UsageRating {
     let label: String
     let score: Int?
-    var claimed = 0
-    var expected = 0
   }
   static func rating(
-    _ sub: MonthlyFinanceSubscription, _ s: MonthlyFinanceState, now: Date = Date(),
-    interval: DateInterval? = nil
+    _ sub: MonthlyFinanceSubscription, _ s: MonthlyFinanceState, now: Date = Date()
   ) -> UsageRating {
-    let c = calendar(s)
     let en = s.preferences.language == "en"
-    let end = interval?.end ?? c.startOfDay(for: now)
-    let start = interval?.start ?? c.date(byAdding: .day, value: -30, to: end)!
-    // 订阅的领取率由关联权益的打卡记录计算；没有关联权益则按月度自评。
-    let linked = s.benefits.filter { $0.subscriptionID == sub.id && !$0.archived }
-    if linked.isEmpty {
-      let target = interval.map { month($0.start, s) } ?? month(now, s)
-      let v = s.reviews.first { $0.subscriptionID == sub.id && $0.month == target }?.rating
-      return UsageRating(
-        label: v.map { (en ? ["Unused", "Sometimes", "Often"] : ["吃灰", "偶尔", "常用"])[$0] }
-          ?? (en ? "Not reviewed" : "未评估"), score: v)
-    }
-    var opportunities = Set<String>()
-    var d = start
-    var daily = false
-    while d < end {
-      for benefit in linked {
-        if let key = claimKey(benefit, s, on: d) {
-          if benefit.kind == .weekly {
-            let w = c.dateInterval(of: .weekOfYear, for: d)!
-            if w.end <= end && w.end > start { opportunities.insert(key) }
-          } else {
-            daily = true
-            opportunities.insert(key)
-          }
-        }
-      }
-      d = c.date(byAdding: .day, value: 1, to: d)!
-    }
-    let count = opportunities.count
-    let done = s.claims.filter { opportunities.contains($0.id) }.count
-    guard count >= (daily ? 7 : 4) else {
-      return UsageRating(
-        label: en ? "Not enough data" : "数据不足", score: nil, claimed: done, expected: count)
-    }
-    let r = Double(done) / Double(count)
-    let value = r >= 0.7 ? 2 : r >= 0.3 ? 1 : 0
+    let target = month(now, s)
+    let value = s.reviews.first { $0.subscriptionID == sub.id && $0.month == target }?.rating
     return UsageRating(
-      label: (en ? ["Unused", "Sometimes", "Often"] : ["吃灰", "偶尔", "常用"])[value], score: value,
-      claimed: done, expected: count)
+      label: value.map { (en ? ["Unused", "Sometimes", "Often"] : ["吃灰", "偶尔", "常用"])[$0] }
+        ?? (en ? "Not reviewed" : "未评估"), score: value)
   }
   static func dusty(_ sub: MonthlyFinanceSubscription, _ s: MonthlyFinanceState, now: Date = Date())
     -> Bool
@@ -468,10 +377,7 @@ extension MonthlyFinanceEngine {
     let first = c.dateInterval(of: .month, for: now)!.start
     return (1...2).allSatisfy { i in
       let start = c.date(byAdding: .month, value: -i, to: first)!
-      return rating(
-        sub, s, now: now,
-        interval: DateInterval(start: start, end: c.date(byAdding: .month, value: 1, to: start)!)
-      ).score == 0
+      return rating(sub, s, now: start).score == 0
     }
   }
 

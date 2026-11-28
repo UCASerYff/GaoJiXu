@@ -118,8 +118,6 @@
 .widget-empty { padding: 7px 4px; color: var(--muted); font-size: 12px; }
 .widget-overflow { margin-top: 4px; }
 .widget-overflow-2 { display: none; }
-.widget-claim { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; min-height: 27px; flex: none; font-size: 11px; }
-.widget-claim .ui-icon { margin: 0; color: var(--widget-accent); }
 #widget-adventure-stage { pointer-events: none; min-width: 0; }
 #widget-adventure-stage .adv-world { height: clamp(108px,42cqw,171px); min-height: 0; border-radius: 6px; }
 .widget-adventure-meta { display: grid; gap: 5px; }
@@ -136,7 +134,7 @@
   .widget-overflow-2 { display: block; }
 }
 @media (max-height: 340px) {
-  .widget-mode .widget-expenses .widget-overflow-4, .widget-mode .widget-benefits .widget-overflow-4,
+  .widget-mode .widget-expenses .widget-overflow-4,
   .widget-mode [data-compact-hide="true"] { display: none; }
   .widget-mode .widget-overflow-2 { display: block; }
   .widget-mode .widget-calendar .widget-day { min-height: 25px; }

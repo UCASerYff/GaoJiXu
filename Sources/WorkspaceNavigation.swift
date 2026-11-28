@@ -48,7 +48,7 @@ enum SavingsWorkspace: String, CaseIterable, Identifiable {
     static func containing(_ section: SavingsSection) -> SavingsWorkspace {
         switch section {
         case .overview: .overview
-        case .ledger, .accounts, .budgets, .reports, .fixedIncome, .fixedExpenses, .benefits: .finances
+        case .ledger, .accounts, .budgets, .reports, .fixedIncome, .fixedExpenses: .finances
         case .goals, .records, .analytics: .savings
         case .adventure: .adventure
         }
@@ -57,15 +57,15 @@ enum SavingsWorkspace: String, CaseIterable, Identifiable {
     func displays(_ section: SavingsSection) -> Bool {
         switch self {
         case .finances:
-            return [.ledger, .accounts, .budgets, .reports, .fixedIncome, .fixedExpenses, .benefits].contains(section)
+            return [.ledger, .accounts, .budgets, .reports, .fixedIncome, .fixedExpenses].contains(section)
         default:
             return sections.contains(section)
         }
     }
 
-    /// 固定收支三项共用一个二级入口，在工作区内部再切换。
+    /// 固定收入和固定支出共用一个二级入口，在工作区内部再切换。
     func canonicalSection(for section: SavingsSection) -> SavingsSection {
-        if self == .finances, [.fixedIncome, .fixedExpenses, .benefits].contains(section) { return .fixedIncome }
+        if self == .finances, [.fixedIncome, .fixedExpenses].contains(section) { return .fixedIncome }
         return section
     }
 }
@@ -166,7 +166,6 @@ struct FixedFinanceWorkspace: View {
                 Picker(tS("固定收支类型", "Recurring finance type"), selection: $selection) {
                     Text(tS("固定收入", "Income")).tag(SavingsSection.fixedIncome)
                     Text(tS("固定支出", "Expenses")).tag(SavingsSection.fixedExpenses)
-                    Text(tS("权益", "Benefits")).tag(SavingsSection.benefits)
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 390)
@@ -177,7 +176,6 @@ struct FixedFinanceWorkspace: View {
 
             switch selection {
             case .fixedExpenses: FixedExpenseView()
-            case .benefits: MonthlyBenefitsView()
             default: FixedIncomeView()
             }
         }

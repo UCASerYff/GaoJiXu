@@ -23,7 +23,6 @@ TYPES = {
     "calendar": ((432, 488), "ledger"),
     "net-worth": ((310, 262), "overview"),
     "expenses": ((356, 328), "fixed-expenses"),
-    "benefits": ((356, 328), "benefits"),
     "adventure": ((462, 344), "adventure"),
 }
 _EnumProc = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)(win.BOOL, win.HWND, win.LPARAM)

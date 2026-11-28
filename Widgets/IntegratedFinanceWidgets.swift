@@ -1,26 +1,7 @@
-import AppIntents
 import Foundation
 import SwiftUI
 import WidgetKit
 
-struct SavingsClaimBenefitIntent: AppIntent {
-    static var title: LocalizedStringResource = "记录权益已领取"
-    static var description = IntentDescription("仅记录本期领取，不执行服务平台领奖，不结算游戏奖励。")
-    static var isDiscoverable = false
-    @Parameter(title: "权益 ID") var benefitID: String
-    @Parameter(title: "权益周期") var periodKey: String
-    @Parameter(title: "业务时区") var timezone: String
-    init() {}
-    init(id: UUID, periodKey: String, timezone: String) { benefitID = id.uuidString; self.periodKey = periodKey; self.timezone = timezone }
-    func perform() async throws -> some IntentResult {
-        guard let id = UUID(uuidString: benefitID) else { throw MonthlyFinanceError("权益记录无效。") }
-        let db = try MonthlyFinanceDatabase(directory: MonthlyFinanceDatabase.location(), readOnly: false)
-        defer { WidgetCenter.shared.reloadTimelines(ofKind: "GaoJiXuMonthlyBenefits") }
-        _ = try db.transaction { try MonthlyFinanceEngine.claimPresented(&$0, benefitID: id, expectedPeriodKey: periodKey, expectedTimezone: timezone) }
-        DistributedNotificationCenter.default().postNotificationName(Notification.Name("gaojixu.integratedMonthly.changed"), object: "SavingsMonthlyWidget", userInfo: nil, deliverImmediately: true)
-        return .result()
-    }
-}
 private struct IntegratedFinanceEntry: TimelineEntry { let date: Date; let state: MonthlyFinanceState?; let failure: String? }
 private struct IntegratedFinanceProvider: TimelineProvider {
     let kind: String
@@ -50,21 +31,12 @@ private struct IntegratedFinanceProvider: TimelineProvider {
 }
 private struct IntegratedFinanceWidgetView: View {
     let entry: IntegratedFinanceEntry
-    let benefits: Bool
     @Environment(\.widgetFamily) private var family
-    private var limit: Int { family == .systemSmall ? 2 : 4 }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let state = entry.state {
-                Group {
-                    if benefits {
-                        VStack(alignment: .leading, spacing: 7) {
-                            title
-                            benefitRows(state)
-                        }
-                    } else { expenseRows(state) }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                expenseRows(state)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 Text(freshness(state)).font(.system(size: 8)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
                     .fixedSize(horizontal: false, vertical: true).padding(.top, 6)
             } else {
@@ -77,9 +49,9 @@ private struct IntegratedFinanceWidgetView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .containerBackground(for: .widget) { Color(nsColor: .windowBackgroundColor) }
-        .widgetURL(URL(string: benefits ? "gaojixu://benefits" : "gaojixu://fixed-expenses"))
+        .widgetURL(URL(string: "gaojixu://fixed-expenses"))
     }
-    private var title: some View { Text(benefits ? "权益打卡" : "固定支出").font(.headline) }
+    private var title: some View { Text("固定支出").font(.headline) }
     @ViewBuilder private func expenseRows(_ state: MonthlyFinanceState) -> some View {
         let pending = MonthlyFinanceEngine.pending(state, now: entry.date)
         let coming = MonthlyFinanceEngine.upcoming(state, now: entry.date, days: 30)
@@ -112,32 +84,15 @@ private struct IntegratedFinanceWidgetView: View {
         }
         .fixedSize(horizontal: false, vertical: true)
     }
-    @ViewBuilder private func benefitRows(_ state: MonthlyFinanceState) -> some View {
-        let due = MonthlyFinanceEngine.dueBenefits(state, now: entry.date)
-        let active = state.benefits.filter { MonthlyFinanceEngine.claimKey($0, state, on: entry.date) != nil }
-        if due.isEmpty { Text(active.isEmpty ? "暂无可记录的权益" : "本期权益均已记录").font(.caption).foregroundStyle(.secondary) }
-        ForEach(Array(due.prefix(limit))) { benefit in
-            HStack {
-                Text(state.preferences.privacy ? "本期权益" : benefit.name).font(.caption).lineLimit(1)
-                Spacer(minLength: 3)
-                Button(intent: SavingsClaimBenefitIntent(id: benefit.id, periodKey: MonthlyFinanceEngine.claimKey(benefit, state, on: entry.date) ?? "", timezone: state.preferences.timezone)) { Image(systemName: "checkmark.circle") }.buttonStyle(.plain)
-            }
-        }
-    }
     private func freshness(_ state: MonthlyFinanceState) -> String {
         let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.timeZone = MonthlyFinanceEngine.calendar(state).timeZone; f.dateFormat = "yyyy/MM/dd HH:mm"
         return "资料更新 " + f.string(from: state.updatedAt)
     }
 }
 struct SavingsFixedExpenseWidget: Widget {
+    let kind = "GaoJiXuFixedExpense"
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "GaoJiXuFixedExpense", provider: IntegratedFinanceProvider(kind: "GaoJiXuFixedExpense")) { IntegratedFinanceWidgetView(entry: $0, benefits: false) }
+        StaticConfiguration(kind: kind, provider: IntegratedFinanceProvider(kind: kind)) { IntegratedFinanceWidgetView(entry: $0) }
             .configurationDisplayName("固定支出").description("待核实账期与近期固定支出，预计费用不等于实际支付。").supportedFamilies([.systemSmall, .systemMedium])
-    }
-}
-struct SavingsMonthlyBenefitsWidget: Widget {
-    var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "GaoJiXuMonthlyBenefits", provider: IntegratedFinanceProvider(kind: "GaoJiXuMonthlyBenefits")) { IntegratedFinanceWidgetView(entry: $0, benefits: true) }
-            .configurationDisplayName("权益打卡").description("记录周期权益领取，不发放游戏奖励。").supportedFamilies([.systemSmall, .systemMedium])
     }
 }

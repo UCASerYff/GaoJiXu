@@ -22,24 +22,31 @@ from urllib.request import Request, urlopen
 from gaojixu.errors import AppError
 
 _log = logging.getLogger(__name__)
-WIDGETS = ("all", "calendar", "net-worth", "expenses", "benefits", "adventure")
+WIDGETS = ("all", "calendar", "net-worth", "expenses", "adventure")
 ROUTES = {
     "overview": "overview", "ledger": "ledger", "budgets": "budgets", "accounts": "accounts",
     "fixed-income": "fixed-income", "fixed-expenses": "fixed-expenses", "today": "fixed-expenses",
-    "benefits": "benefits", "adventure": "adventure", "goals": "goals",
+    "benefits": "fixed-expenses", "adventure": "adventure", "goals": "goals",
 }
 TARGETS = {"", "#widgets", *("#" + route for route in ROUTES.values()), *("?widget=" + widget for widget in WIDGETS)}
 
 
+def widget_name(name: str) -> str:
+    return "expenses" if name == "benefits" else name
+
+
 def target_for(link: str | None, widget: str | None = None) -> str:
     if widget:
-        return f"?widget={widget}"
+        widget = widget_name(widget)
+        if widget in WIDGETS:
+            return f"?widget={widget}"
+        raise ValueError("无法识别这个搞积蓄小组件。")
     if link:
         location = urlsplit(link)
         if location.scheme == "gaojixu" and location.netloc in ROUTES and location.path in ("", "/"):
             return "#" + ROUTES[location.netloc]
         if location.scheme == "gaojixu" and location.netloc == "widgets" and location.path in ("", "/"):
-            name = parse_qs(location.query).get("type", ["all"])[0]
+            name = widget_name(parse_qs(location.query).get("type", ["all"])[0])
             if name in WIDGETS:
                 return f"?widget={name}"
         raise ValueError("无法识别这个搞积蓄链接。")

@@ -3,9 +3,9 @@
   const title = {
     calendar:["每日收支与积蓄","Daily cash flow and savings"],
     "net-worth":["净资产","Net worth"], expenses:["固定支出","Fixed expenses"],
-    benefits:["权益打卡","Benefits"], adventure:["勇者冒险","Hero adventure"]
+    adventure:["勇者冒险","Hero adventure"]
   };
-  const destination = {calendar:"ledger","net-worth":"overview",expenses:"fixed-expenses",benefits:"benefits",adventure:"adventure"};
+  const destination = {calendar:"ledger","net-worth":"overview",expenses:"fixed-expenses",adventure:"adventure"};
   const candidate = new URLSearchParams(location.search).get("desktop") || "";
   const lease = title[gallery] && /^[a-f0-9]{32}$/.test(candidate) ? candidate : "";
   let desktop = {available:false,windows:{}};
@@ -30,7 +30,7 @@
         t("单独打开","Open separately") + "</a>");
   }
   function tile(type, content, footer) {
-    const symbols = {calendar:"calendar","net-worth":"building.columns.fill",expenses:"repeat",benefits:"gift.fill",adventure:"map.fill"};
+    const symbols = {calendar:"calendar","net-worth":"building.columns.fill",expenses:"repeat",adventure:"map.fill"};
     return '<article class="card widget-tile widget-' + type + '"><div class="widget-title"><h2>' + icon(symbols[type]) + t(...title[type]) + "</h2>" +
       '<div class="widget-window-actions">' + desktopControls(type) + routeLink(type) + "</div></div>" +
       '<div class="widget-body">' + content + '</div>' + (footer ? '<small class="widget-footer">' + e(footer) + "</small>" : "") + "</article>";
@@ -123,23 +123,6 @@
       moreCount(pending.length,4) +
       "</div>",monthly.updatedAt ? t("资料更新 ","Updated ") + monthly.updatedAt : "");
   }
-  function benefits() {
-    const monthly = state.monthly;
-    if (!["ready","readonly"].includes(monthly.status)) return tile("benefits",'<p class="muted">' +
-      e(t(monthly.notice,"Benefit data is unavailable. Open Gao Savings to check your library.")) + "</p>");
-    const active = monthly.benefits.filter(benefit => benefit.periodKey);
-    const open = active.filter(benefit => !benefit.claimed);
-    const privacy = monthly.preferences?.privacy;
-    const controls = open.slice(0,4).map((benefit,index) => '<div class="widget-line" data-compact-hide="' + (index >= 2) +
-      '"><span>' + (privacy ? t("本期权益","Current benefit") : e(benefit.name)) +
-      '</span><button class="ghost widget-claim" type="button" data-benefit="' + e(benefit.id) + '" data-period="' + e(benefit.periodKey) +
-      '" data-timezone="' + e(monthly.preferences?.timezone || "") + '" title="' +
-      t("标记已领取","Mark claimed") + '" aria-label="' + t("标记已领取","Mark claimed") + '"' + (monthly.status === "ready" ? "" : " disabled") + ">" +
-      icon("checkmark") + '<span>' + t("记为已领","Mark claimed") + "</span></button></div>").join("");
-    return tile("benefits",'<div class="widget-rows">' + (controls || '<p class="widget-empty">' + (active.length ?
-      t("本期权益均已记录","All benefits recorded") : t("暂无可记录的权益","No benefits to record")) + "</p>") +
-      moreCount(open.length,4) + "</div>",monthly.updatedAt ? t("资料更新 ","Updated ") + monthly.updatedAt : "");
-  }
   function moreCount(total, defaultLimit) {
     return [defaultLimit,2].filter(limit => total > limit).map(limit =>
       '<small class="muted widget-overflow widget-overflow-' + limit + '">' +
@@ -152,7 +135,7 @@
       '<div class="widget-adventure-vitals"><progress class="widget-adventure-hp" max="100" aria-label="' + t("勇者生命","Hero health") +
       '"></progress><small></small></div></div>');
   }
-  const makers = {calendar,"net-worth":netWorth,expenses,benefits,adventure};
+  const makers = {calendar,"net-worth":netWorth,expenses,adventure};
   function updateAdventure(root) {
     const scene = root.querySelector("#widget-adventure-stage");
     const details = root.querySelector("#widget-adventure-detail");
@@ -231,7 +214,7 @@
       return;
     }
     const native = event.target.closest("[data-window-open],[data-window-pin],[data-window-close],[data-window-route]");
-    if (native || event.target.closest("[data-benefit]")) actionFeedback();
+    if (native) actionFeedback();
     if (native?.dataset.windowOpen) {
       native.disabled = true;
       desktopRequest("open",native.dataset.windowOpen).catch(actionFeedback).finally(() => refreshWindows(true));
@@ -253,13 +236,6 @@
       }
       return;
     }
-    const claim = event.target.closest("[data-benefit]");
-    if (!claim || claim.disabled) return;
-    claim.disabled = true;
-    api("/api/monthly/claim",{id:claim.dataset.benefit,periodKey:claim.dataset.period,expectedTimezone:claim.dataset.timezone}).catch(error => {
-      claim.disabled = false;
-      actionFeedback(error);
-    });
   }
   function render(size) {
     const selected = makers[size] ? [size] : Object.keys(makers);
@@ -267,7 +243,7 @@
     const latest = JSON.stringify([selected,state.financeRevision,state.summary.monthKey,state.currency,state.settings.language,state.monthly]);
     if (latest !== signature || !root.hasChildNodes()) {
       const previousFocus = root.contains(document.activeElement) ? document.activeElement : null;
-      const focusKey = ["data-calendar-day","data-window-pin","data-window-close","data-window-open","data-window-route","data-benefit"]
+      const focusKey = ["data-calendar-day","data-window-pin","data-window-close","data-window-open","data-window-route"]
         .find(key => previousFocus?.hasAttribute(key));
       signature = latest;
       root.innerHTML = (gallery ? "" : '<div class="workbench-header"><div><h1>' + t("小组件","Widgets") + '</h1></div></div>') +

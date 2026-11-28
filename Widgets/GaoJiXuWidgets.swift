@@ -318,6 +318,5 @@ struct GaoJiXuWidgets: WidgetBundle {
         MonthlyFinanceCalendarWidget()
         NetWorthWidget()
         SavingsFixedExpenseWidget()
-        SavingsMonthlyBenefitsWidget()
     }
 }

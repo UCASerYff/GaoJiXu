@@ -23,7 +23,8 @@ import Foundation
     func d(_ t: String) -> Date { ISO8601DateFormatter().date(from: t)! }
     let oct = d("2026-10-01T00:00:00Z")
     let now = d("2026-11-02T08:00:00Z")
-    let plan = MonthlyFinancePlan(start: oct, anchor: oct, price: Decimal(string: "12.34")!)
+    let plan = MonthlyFinancePlan(
+      start: oct, anchor: oct, price: Decimal(string: "12.34")!, benefit: .weekly)
     let sub = MonthlyFinanceSubscription(name: "隔离订阅", plans: [plan])
     let ind = MonthlyFinanceBenefitItem(name: "独立周权益", kind: .weekly)
     let linked = MonthlyFinanceBenefitItem(name: "日权益", kind: .daily, subscriptionID: sub.id)
@@ -33,7 +34,10 @@ import Foundation
     try MonthlyFinanceEngine.savePayment(
       &seed, bill: paidBill, expected: nil, amount: 12.34, paidAt: oct, skipped: false, note: "原确认",
       periods: 1, now: now)
-    try MonthlyFinanceEngine.claim(&seed, benefitID: ind.id, date: now, now: now)
+    seed.claims = [
+      .init(id: "\(ind.id)|weekly|2026-11-02", subscriptionID: ind.id, date: now, recordedAt: now),
+      .init(id: "\(linked.id)|daily|2026-11-02", subscriptionID: sub.id, date: now, recordedAt: now),
+    ]
     var obj = try JSONSerialization.jsonObject(with: JSONEncoder().encode(seed)) as! [String: Any]
     obj.removeValue(forKey: "legacyRewardIDs")
     obj["rewards"] = [["id": "claim|legacy", "date": 10, "kind": "claim", "amount": 20]]
@@ -65,27 +69,10 @@ import Foundation
     ).write(to: marker)
     let db = try MonthlyFinanceDatabase(directory: dest, readOnly: false)
     let original = try db.read()
-    let shownKey = MonthlyFinanceEngine.claimKey(linked, original, on: now)!
-    var widgetState = original
-    try MonthlyFinanceEngine.claimPresented(&widgetState, benefitID: linked.id,
-      expectedPeriodKey: shownKey, expectedTimezone: "Asia/Shanghai", now: now)
-    let alreadyClaimed = widgetState
-    try MonthlyFinanceEngine.claimPresented(&widgetState, benefitID: linked.id,
-      expectedPeriodKey: shownKey, expectedTimezone: "Asia/Shanghai", now: now)
-    try check(widgetState == alreadyClaimed, "相同小组件请求重复记领")
-    try rejects {
-      try MonthlyFinanceEngine.claimPresented(&widgetState, benefitID: linked.id,
-        expectedPeriodKey: shownKey, expectedTimezone: "Asia/Shanghai", now: now.addingTimeInterval(86_400))
-    }
-    widgetState.preferences.timezone = "Asia/Tokyo"
-    try rejects {
-      try MonthlyFinanceEngine.claimPresented(&widgetState, benefitID: linked.id,
-        expectedPeriodKey: shownKey, expectedTimezone: "Asia/Shanghai", now: now)
-    }
-    try check(widgetState.claims == alreadyClaimed.claims, "过期或时区变化的按钮改变打卡")
     try check(
       original.subscriptions == seed.subscriptions && original.payments == seed.payments
-        && original.claims == seed.claims && original.legacyRewardIDs == Set(["claim|legacy"]),
+        && original.benefits == seed.benefits && original.claims == seed.claims
+        && original.legacyRewardIDs == Set(["claim|legacy"]),
       "迁移数据不一致")
     let encoded = try MonthlyFinanceConnection(existing: staged.databaseURL, readOnly: true)
       .payload()
@@ -93,11 +80,11 @@ import Foundation
     try check(
       fields["pet"] == nil && fields["rewards"] == nil
         && !String(decoding: encoded, as: UTF8.self).contains("never-copy-value"), "源游戏数据进入目标库")
-    try db.transaction { s in
-      try MonthlyFinanceEngine.claim(
-        &s, benefitID: ind.id, date: now.addingTimeInterval(3600), now: now)
-    }
-    try check(try db.read() == original, "已领同周权益不应重复、发奖或推进时间")
+    let future = d("2027-02-03T08:00:00Z")
+    try check(
+      MonthlyFinanceEngine.rating(sub, original, now: now).score == nil
+        && !MonthlyFinanceEngine.dusty(sub, original, now: future),
+      "停用的权益打卡不应代替订阅自评或产生续费提醒")
     let b = MonthlyFinanceEngine.pending(original, now: now).first!
     try db.transaction { s in
       try MonthlyFinanceEngine.savePayment(
@@ -145,8 +132,21 @@ import Foundation
     let reviewState = try db.read()
     try check(
       reviewState.reviews.count == 1 && reviewState.reviews[0].rating == 2
+        && MonthlyFinanceEngine.rating(sub, reviewState, now: now).score == 2
+        && reviewState.benefits == seed.benefits && reviewState.claims == seed.claims
         && reviewState.legacyRewardIDs == original.legacyRewardIDs
-        && reviewState.tombstones == original.tombstones, "评价重复、重奖或墓碑变化")
+        && reviewState.tombstones == original.tombstones, "自评、支付写入或旧权益历史回读不一致")
+    var reviewHistory = reviewState
+    try MonthlyFinanceEngine.setReview(
+      &reviewHistory, subscriptionID: sub.id, month: d("2026-12-15T08:00:00Z"),
+      score: 0, expected: nil, now: future)
+    try check(
+      !MonthlyFinanceEngine.dusty(sub, reviewHistory, now: future), "缺失评分月不应记为低使用")
+    try MonthlyFinanceEngine.setReview(
+      &reviewHistory, subscriptionID: sub.id, month: d("2027-01-15T08:00:00Z"),
+      score: 0, expected: nil, now: future)
+    try check(
+      MonthlyFinanceEngine.dusty(sub, reviewHistory, now: future), "两个完整月的低使用自评应保留复盘提示")
     try db.transaction { s in
       var changed = sub
       changed.plans[0].price = 20
@@ -156,16 +156,50 @@ import Foundation
     let revised = try db.read().subscriptions[0]
     try check(
       revised.plans.count == 2 && revised.plans[0].price == 12.34
+        && revised.plans[0].benefit == .weekly && revised.plans[1].benefit == .none
         && revised.plans[0].end == revised.plans[1].start, "修订没有保留历史计划")
     try db.transaction { s in
-      try MonthlyFinanceEngine.claim(&s, benefitID: linked.id, date: now, now: now)
       try MonthlyFinanceEngine.removeSubscription(&s, expected: revised)
     }
     let detached = try db.read()
+    var detachedBenefit = linked
+    detachedBenefit.subscriptionID = nil
+    var detachedClaim = seed.claims[1]
+    detachedClaim.subscriptionID = linked.id
     try check(
-      detached.benefits.first { $0.id == linked.id }?.subscriptionID == nil
-        && detached.claims.contains { $0.subscriptionID == linked.id }
-        && detached.legacyRewardIDs == original.legacyRewardIDs, "解除订阅损坏了独立权益或重复发奖")
+      detached.benefits == [ind, detachedBenefit]
+        && detached.claims == [seed.claims[0], detachedClaim]
+        && detached.legacyRewardIDs == original.legacyRewardIDs, "解除订阅损坏了旧权益或打卡")
+    // The earliest snapshots kept the benefit on the subscription plan, without a benefits array.
+    let olderClaim = MonthlyFinanceClaim(
+      id: "\(sub.id)|weekly|2026-11-02", subscriptionID: sub.id, date: now, recordedAt: now)
+    var older = obj
+    older.removeValue(forKey: "benefits")
+    older["claims"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode([olderClaim]))
+    older["tombstones"] = ["claim|legacy"]
+    let olderRaw = try JSONSerialization.data(withJSONObject: older, options: .sortedKeys)
+    try conn.updatePayload(olderRaw)
+    let olderStaged = try MonthlyFinanceMigration.stage(
+      snapshotURL: source, into: base.appendingPathComponent("older-monthly"))
+    let olderState = try JSONDecoder().decode(
+      MonthlyFinanceState.self,
+      from: MonthlyFinanceConnection(existing: olderStaged.databaseURL, readOnly: true).payload())
+    var olderBenefit = MonthlyFinanceBenefitItem(
+      id: sub.id, name: sub.name, kind: .weekly, subscriptionID: sub.id,
+      createdAt: sub.createdAt, archived: sub.archived)
+    try check(
+      try conn.payload() == olderRaw && olderState.claims == [olderClaim]
+        && olderState.benefits == [olderBenefit]
+        && olderState.subscriptions == seed.subscriptions && olderState.payments == seed.payments
+        && olderState.legacyRewardIDs == original.legacyRewardIDs,
+      "仅有计划权益的旧快照未完整保留关联、历史或原始源")
+    var olderDetached = olderState
+    try MonthlyFinanceEngine.removeSubscription(&olderDetached, expected: sub)
+    try MonthlyFinanceEngine.validate(olderDetached)
+    olderBenefit.subscriptionID = nil
+    try check(
+      olderDetached.benefits == [olderBenefit] && olderDetached.claims == [olderClaim],
+      "解除旧式订阅不应删除仍有历史所有者的打卡")
     try fm.removeItem(at: marker)
     try rejects { _ = try db.read() }
     try rejects { try db.transaction { $0.events = [] } }
@@ -209,7 +243,7 @@ import Foundation
       try check(!fm.fileExists(atPath: destination.path), "未知表结构创建了目标暂存库")
     }
     print(
-      "PASS: snapshot-only staging, complete field identity, source hash, authority, payment/plan history, independent weekly claim, no reward replay, orphan protection, no silent empty store."
+      "PASS: snapshot-only staging, old benefit history, source hash, authority, payment/plan history, manual usage review, no reward replay, orphan protection, no silent empty store."
     )
   }
 }

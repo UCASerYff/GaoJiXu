@@ -355,11 +355,14 @@ def run_private(work, evidence, executable=None, *, inspect_main_window=None):
         browser_step(base, "deep-link")
         situation = desktop.find("app"), desktop.find("tray")
         assert len(situation[0]) == 1 and set(situation[1]) == {tray}, situation
+        assert start("--widget", "benefits").wait(timeout=10) == 0
+        until(lambda: any(row[:2] == [app.pid, "browser"] and "?widget=expenses&" in row[3] for row in event_rows()),
+              "old benefits shortcut forwards to fixed expenses")
         for widget_kind in TYPES:
             assert start("--widget", widget_kind).wait(timeout=10) == 0
-        until(lambda: len(desktop.find("app")) == 1 + len(TYPES), "main window and all five independently forwarded widgets")
+        until(lambda: len(desktop.find("app")) == 1 + len(TYPES), "main window and all four independently forwarded widgets")
         assert set(desktop.find("tray")) == {tray}
-        print("Caption close retains the instance and write path. Tray activation, ordinary relaunch, the WebGL adventure route and five widgets forward without a second tray.", flush=True)
+        print("Caption close retains the instance and write path. Tray activation, ordinary relaunch, the WebGL adventure route and four widgets forward without a second tray.", flush=True)
 
         browser_step(base, "prepare")
         choose(tray, "退出")

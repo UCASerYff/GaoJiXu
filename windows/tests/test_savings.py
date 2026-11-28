@@ -232,15 +232,12 @@ def test_monthly_payment_posts_once(tmp_path):
     from gaojixu import monthly
     from gaojixu.store import post_monthly_to_ledger
     store.create_monthly()
-    subscription = monthly.save_subscription(store.directory, {"name": "视频会员", "price": 25, "currency": "CNY", "cycle": "monthly", "interval": 1, "benefit": "daily"}, store.now)
+    subscription = monthly.save_subscription(store.directory, {"name": "视频会员", "price": 25, "currency": "CNY", "cycle": "monthly", "interval": 1}, store.now)
     cash = store.doc["accounts"][0]["id"]
     payment = monthly.record_payment(store.directory, {"subscriptionID": subscription["id"], "due": "2026-11-15"}, store.now)
     post_monthly_to_ledger(store, payment["payment"], subscription, cash)
     with pytest.raises(AppError):
         monthly.record_payment(store.directory, {"subscriptionID": subscription["id"], "due": "2026-11-15"}, store.now)
-    benefit = monthly.save_benefit(store.directory, {"name": "每日会员", "kind": "daily"}, store.now)
-    assert monthly.claim_benefit(store.directory, benefit["id"], store.now)["claimed"] is True
-    assert monthly.claim_benefit(store.directory, benefit["id"], store.now)["claimed"] is False
     assert any(row["id"].startswith("auto-monthly|") for row in store.doc["ledgerEntries"])
 
 

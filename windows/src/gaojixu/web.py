@@ -360,15 +360,6 @@ def dispatch(store: Store, path: str, payload: dict):
         return monthly.save_subscription(store.directory, payload, store.now)
     if path == "/api/monthly/pay":
         return monthly_bridge.confirm(store, payload)
-    if path == "/api/monthly/benefit":
-        store.require_ready()
-        return monthly.save_benefit(store.directory, payload, store.now)
-    if path == "/api/monthly/claim":
-        store.require_ready()
-        return monthly.claim_benefit(
-            store.directory, payload["id"], store.now, payload.get("date"),
-            payload.get("periodKey"), payload.get("expectedTimezone"),
-        )
     if path == "/api/monthly/change":
         return monthly_bridge.change_item(store, payload)
     if path == "/api/monthly/event":

@@ -7,7 +7,7 @@ import WidgetKit
   static let shared = MonthlyFinanceStore()
   @Published private(set) var state: MonthlyFinanceState?
   @Published var problem: String?
-  @Published private(set) var unavailable = "正在读取固定支出与权益…"
+  @Published private(set) var unavailable = "正在读取固定支出…"
   private var observations: [NSObjectProtocol] = []
   private var wake: NSObjectProtocol?
   private var reminderTask: Task<Void, Never>?
@@ -37,7 +37,7 @@ import WidgetKit
       scheduleReminders()
     } catch {
       state = nil
-      unavailable = "固定支出与权益资料未就绪。请先完成迁移，或检查现用资料。\n" + error.localizedDescription
+      unavailable = "固定支出资料未就绪。请先完成迁移，或检查现用资料。\n" + error.localizedDescription
     }
   }
   @discardableResult func update(_ body: (inout MonthlyFinanceState) throws -> Void) -> Bool {
@@ -49,10 +49,7 @@ import WidgetKit
       NotificationCenter.default.post(name: Self.changed, object: nil)
       DistributedNotificationCenter.default().postNotificationName(
         Self.changed, object: "SavingsMonthlyHost", userInfo: nil, deliverImmediately: true)
-      // The receiving widget kinds may each have multiple sizes/instances.
-      for kind in ["GaoJiXuFixedExpense", "GaoJiXuMonthlyBenefits"] {
-        WidgetCenter.shared.reloadTimelines(ofKind: kind)
-      }
+      WidgetCenter.shared.reloadTimelines(ofKind: "GaoJiXuFixedExpense")
       scheduleReminders()
       return true
     } catch {

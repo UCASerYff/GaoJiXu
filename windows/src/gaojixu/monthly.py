@@ -1,4 +1,4 @@
-"""固定支出与权益。沿用 Mac 的 monthly.sqlite 单行 JSON，不在缺失时新建空库。"""
+"""固定支出。沿用 Mac 的 monthly.sqlite 单行 JSON，包括旧权益记录。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from gaojixu.errors import AppError
 from gaojixu.money import money_number
-from gaojixu.timeutil import add_months, cocoa_json, days_in_month, month_key, parse_instant, parse_month_key, read_cocoa, start_of_day, week_start
+from gaojixu.timeutil import add_months, cocoa_json, days_in_month, month_key, parse_instant, parse_month_key, read_cocoa, start_of_day
 
 OWNER = "com.gaojixu.savings"
 CURRENCIES = {"CNY", "USD", "EUR", "HKD", "JPY", "GBP"}
@@ -303,16 +303,13 @@ def save_subscription(root: Path, payload: dict, now) -> dict:
         raise AppError("周期间隔无效。", "invalid")
     zone = business_zone(state, now().tzinfo)
     start = start_of_day(parse_instant(payload.get("start"), zone) if payload.get("start") else now(), zone)
-    benefit = payload.get("benefit") or "none"
-    if benefit not in {"none", "daily", "weekly"}:
-        raise AppError("权益类型无法识别。", "invalid")
     existing = _row(state, "subscriptions", payload.get("id")) if payload.get("id") else None
     if payload.get("id") and not existing:
         raise AppError("这项订阅已变化。", "conflict")
     anchor = parse_instant(payload["anchor"], zone) if payload.get("anchor") else start
     plan_values = {
         "anchor": cocoa_json(start_of_day(anchor, zone)), "price": price, "currency": currency,
-        "cycle": cycle, "interval": interval, "monthEnd": bool(payload.get("monthEnd")), "benefit": benefit,
+        "cycle": cycle, "interval": interval, "monthEnd": bool(payload.get("monthEnd")),
     }
     if existing:
         plan = (existing.get("plans") or [{}])[-1]
@@ -324,7 +321,7 @@ def save_subscription(root: Path, payload: dict, now) -> dict:
             if previous_start and effective.date() < previous_start.date():
                 raise AppError("变更生效日不能早于当前计划开始日。", "invalid")
             plan["end"] = cocoa_json(effective)
-            existing["plans"].append({"id": new_id(), "start": cocoa_json(effective), **plan_values})
+            existing["plans"].append({"id": new_id(), "start": cocoa_json(effective), "benefit": "none", **plan_values})
         existing["name"] = name
         existing["category"] = payload.get("category") or existing.get("category") or "影音"
         existing["note"] = str(payload.get("note") or "")
@@ -345,6 +342,7 @@ def save_subscription(root: Path, payload: dict, now) -> dict:
             "plans": [{
                 "id": new_id(),
                 "start": cocoa_json(start),
+                "benefit": "none",
                 **plan_values,
             }],
             "autoRenew": bool(payload.get("autoRenew", True)),
@@ -355,20 +353,10 @@ def save_subscription(root: Path, payload: dict, now) -> dict:
             "note": str(payload.get("note") or ""),
         }
         state.setdefault("subscriptions", []).append(row)
-        if benefit != "none":
-            state.setdefault("benefits", []).append({
-                "id": new_id(),
-                "name": name,
-                "kind": benefit,
-                "subscriptionID": subscription_id,
-                "createdAt": cocoa_json(now()),
-                "archived": False,
-                "note": "",
-            })
     for key in ("cancelIntent", "trialResolved", "stacking"):
         if key in payload:
             row[key] = bool(payload[key])
-    for key in ("trialEnd", "cancelDeadline", "cancelledAt", "serviceEnd"):
+    for key in ("trialEnd", "cancelDeadline", "cancelledAt"):
         if key in payload:
             if payload[key]:
                 date = parse_instant(payload[key], zone)
@@ -507,95 +495,18 @@ def _covered(bill, subscription, state):
     return any(payment.get("id") == bill["id"] for payment in payments)
 
 
-def _claim_key(benefit, state, date, zone):
-    if benefit.get("archived") or benefit.get("kind") not in {"weekly", "daily"}:
-        return None
-    subscription_id = benefit.get("subscriptionID")
-    if subscription_id:
-        subscription = _row(state, "subscriptions", subscription_id)
-        if not subscription or subscription.get("archived"):
-            return None
-        day = date.date().isoformat()
-        if subscription.get("cancelledAt") and (
-                not subscription.get("serviceEnd") or day > _calendar_day(subscription["serviceEnd"], zone)):
-            return None
-        if not any(
-                _calendar_day(plan.get("start"), zone) <= day
-                and (not plan.get("end") or day < _calendar_day(plan["end"], zone))
-                for plan in subscription.get("plans", [])):
-            return None
-    period = week_start(date, zone) if benefit["kind"] == "weekly" else start_of_day(date, zone)
-    return f"{benefit['id']}|{benefit['kind']}|{period.date().isoformat()}"
-
-
-def save_benefit(root: Path, payload: dict, now) -> dict:
-    state = _require(root, payload.get("expectedRevision"))
-    name = str(payload.get("name") or "").strip()
-    kind = payload.get("kind") or "daily"
-    if not name or kind not in {"daily", "weekly"}:
-        raise AppError("请填写权益名称，并选择每日或每周。", "invalid")
-    subscription_id = payload.get("subscriptionID")
-    subscription = _row(state, "subscriptions", subscription_id) if subscription_id else None
-    if subscription_id and not subscription:
-        raise AppError("关联的订阅不存在。", "invalid")
-    row = _row(state, "benefits", payload.get("id")) if payload.get("id") else None
-    if payload.get("id") and not row:
-        raise AppError("这项权益已变化。", "conflict")
-    if row is None:
-        row = {"id": new_id(), "createdAt": cocoa_json(now())}
-        state.setdefault("benefits", []).append(row)
-    row.update(name=name, kind=kind, archived=bool(payload.get("archived")), note=str(payload.get("note") or ""))
-    if subscription:
-        row["subscriptionID"] = subscription["id"]
-    else:
-        row.pop("subscriptionID", None)
-    _save(root, state, now)
-    return row
-
-
-def claim_benefit(root: Path, benefit_id: str, now, date=None, expected=None, expected_timezone=None) -> dict:
-    state = _require(root)
-    benefit = _row(state, "benefits", benefit_id)
-    if benefit is None:
-        raise AppError("没有这项权益。", "invalid")
-    moment = now()
-    zone = business_zone(state, moment.tzinfo)
-    chosen = parse_instant(date, zone) if date else moment.astimezone(zone)
-    if chosen.date() > moment.astimezone(zone).date():
-        raise AppError("不能补记未来的权益。", "invalid")
-    claim_id = _claim_key(benefit, state, chosen, zone)
-    if not claim_id:
-        raise AppError("对应日期的权益不可记录。", "invalid")
-    if expected and claim_id != expected:
-        raise AppError("领取周期已变化，请刷新后重试。", "conflict")
-    if expected_timezone is not None and expected_timezone != (state.get("preferences", {}).get("timezone") or ""):
-        raise AppError("业务时区已变化，请刷新后重试。", "conflict")
-    if _row(state, "claims", claim_id):
-        return {"claimed": False, "id": claim_id}
-    state.setdefault("claims", []).append({
-        "id": claim_id,
-        "subscriptionID": benefit.get("subscriptionID") or benefit["id"],
-        "date": cocoa_json(chosen),
-        "recordedAt": cocoa_json(moment),
-        "backfill": chosen.date() != moment.astimezone(zone).date(),
-    })
-    _save(root, state, now)
-    return {"claimed": True, "id": claim_id}
-
-
 def change_item(root, payload, now):
     state = _require(root, payload.get("expectedRevision"))
     collection = payload.get("collection")
     operation = payload.get("operation")
-    if collection not in {"subscriptions", "payments", "events", "benefits", "claims"}:
+    if collection not in {"subscriptions", "payments", "events"}:
         raise AppError("记录类型无法识别。", "invalid")
     current = _row(state, collection, payload.get("id"))
     if not current:
         raise AppError("记录已变化。", "conflict")
-    if operation == "archive" and collection in {"subscriptions", "benefits"}:
+    if operation == "archive" and collection == "subscriptions":
         current["archived"] = not current.get("archived")
-        if collection == "subscriptions":
-            current["updatedAt"] = cocoa_json(now())
+        current["updatedAt"] = cocoa_json(now())
     elif operation == "toggle" and collection == "events":
         if current.get("doneAt"):
             del current["doneAt"]
@@ -607,6 +518,7 @@ def change_item(root, payload, now):
             ident = current["id"]
             state["payments"] = [row for row in state.get("payments", []) if row.get("subscriptionID") != ident]
             state["reviews"] = [row for row in state.get("reviews", []) if row.get("subscriptionID") != ident]
+            # Preserve historical claims with their detached legacy benefit so the shared schema keeps valid owners.
             detached = {row["id"].casefold(): row["id"] for row in state.get("benefits", []) if row.get("subscriptionID") == ident}
             claims = []
             for row in state.get("claims", []):
@@ -622,10 +534,6 @@ def change_item(root, payload, now):
                     if row.get("subscriptionID") == ident:
                         row.pop("subscriptionID", None)
             state["tombstones"] = sorted(set(state.get("tombstones", [])) | {f"deleted|{ident}"})
-        if collection == "benefits":
-            prefix = current["id"].casefold() + "|"
-            state["claims"] = [row for row in state.get("claims", []) if not row.get("id", "").casefold().startswith(prefix)]
-            state["tombstones"] = sorted(set(state.get("tombstones", [])) | {f"deleted-benefit|{current['id']}"})
     else:
         raise AppError("记录操作无效。", "invalid")
     _save(root, state, now)
@@ -697,53 +605,22 @@ def update_preferences(root, payload, now):
     return prefs
 
 
-def _use_rating(subscription, state, now, zone, interval=None):
-    ident = subscription.get("id")
-    linked = [row for row in state.get("benefits", [])
-              if row.get("subscriptionID") == ident and not row.get("archived")]
-    if not linked:
-        key = month_key(interval[0] if interval else now, zone)
-        row = next((review for review in state.get("reviews", [])
-                    if review.get("subscriptionID") == ident and review.get("month") == key), None)
-        return {"score": row.get("rating") if row else None,
-                "label": ("较少使用", "偶尔使用", "经常使用")[row["rating"]] if row else "未评估"}
-    end = start_of_day(now, zone)
-    start, end = interval or (end - timedelta(days=30), end)
-    opportunities = set()
-    daily = False
-    day = start
-    while day < end:
-        for benefit in linked:
-            key = _claim_key(benefit, state, day, zone)
-            if key is None:
-                continue
-            if benefit["kind"] == "weekly":
-                week_end = week_start(day, zone) + timedelta(days=7)
-                if not start < week_end <= end:
-                    continue
-            else:
-                daily = True
-            opportunities.add(key.casefold())
-        day += timedelta(days=1)
-    expected = len(opportunities)
-    claimed = sum(row.get("id", "").casefold() in opportunities for row in state.get("claims", []))
-    if expected < (7 if daily else 4):
-        return {"score": None, "label": "数据不足", "expected": expected, "claimed": claimed}
-    rate = claimed / expected
-    score = 2 if rate >= .7 else 1 if rate >= .3 else 0
-    return {"score": score, "label": ("较少使用", "偶尔使用", "经常使用")[score],
-            "expected": expected, "claimed": claimed}
+def _use_rating(subscription, state, period):
+    return next((review["rating"] for review in state.get("reviews", [])
+                 if review.get("subscriptionID") == subscription["id"] and review.get("month") == period), None)
 
 
 def summary(root: Path, tz, now=None):
     status, state, notice = load_state(root)
     if state is None:
-        return {"status": status, "notice": notice, "subscriptions": [], "payments": [], "benefits": [], "claims": []}
+        return {"status": status, "notice": notice, "subscriptions": [], "payments": []}
     zone = business_zone(state, tz)
     moment = (now() if now else datetime.now(zone)).astimezone(zone)
     today = moment.date().isoformat()
     lower = add_months(moment, -12, moment.day, zone)
     upper = moment + timedelta(days=90)
+    first = start_of_day(moment, zone).replace(day=1)
+    prior_months = [month_key(add_months(first, offset, 1, zone), zone) for offset in (-2, -1)]
     subscriptions = []
     bills = []
     for row in state.get("subscriptions", []):
@@ -756,32 +633,23 @@ def summary(root: Path, tz, now=None):
             if row.get("stacking") and start and not row.get("cancelledAt"):
                 far = add_months(moment, 600, moment.day, zone)
                 renewal = next((bill for bill in _bills(row, state, start, far, zone) if not _covered(bill, row, state)), None)
-        first = start_of_day(moment, zone).replace(day=1)
-        month_starts = [add_months(first, offset, 1, zone) for offset in (-2, -1, 0)]
-        rating = _use_rating(row, state, moment, zone)
-        rating["reviewRenewal"] = all(
-            _use_rating(row, state, moment, zone, period)["score"] == 0
-            for period in zip(month_starts, month_starts[1:])
-        )
+        score = _use_rating(row, state, today[:7])
+        rating = {
+            "score": score,
+            "label": ("较少使用", "偶尔使用", "经常使用")[score] if score is not None else "未评估",
+            "reviewRenewal": all(_use_rating(row, state, period) == 0 for period in prior_months),
+        }
         subscriptions.append({
             **row, "nextRenewal": renewal, "planCount": len(row.get("plans", [])),
             "usage": rating,
-            **{key: plan.get(key) for key in ("price", "currency", "cycle", "interval", "benefit", "monthEnd")},
-            **{key: _calendar_day(row.get(key), zone) for key in ("trialEnd", "cancelDeadline", "cancelledAt", "serviceEnd")},
+            **{key: plan.get(key) for key in ("price", "currency", "cycle", "interval", "monthEnd")},
+            **{key: _calendar_day(row.get(key), zone) for key in ("trialEnd", "cancelDeadline", "cancelledAt")},
             "start": _calendar_day(plan.get("start"), zone), "anchor": _calendar_day(plan.get("anchor"), zone),
         })
     payments = [
         {**row, **{key: _calendar_day(row.get(key), zone) for key in ("due", "paidAt")}}
         for row in sorted(state.get("payments", []), key=lambda payment: (payment.get("paidAt", 0), payment.get("recordedAt", 0)), reverse=True)
     ]
-    claims = [
-        {**row, "date": _calendar_day(row.get("date"), zone)} for row in state.get("claims", [])
-    ]
-    claim_ids = {str(row.get("id")).casefold() for row in claims}
-    benefits = []
-    for row in state.get("benefits", []):
-        key = _claim_key(row, state, moment, zone)
-        benefits.append({**row, "periodKey": key, "claimed": bool(key and key.casefold() in claim_ids)})
     events = []
     for row in state.get("events", []):
         date = read_cocoa(row.get("deadline"), zone)
@@ -794,8 +662,6 @@ def summary(root: Path, tz, now=None):
         "subscriptions": subscriptions,
         "bills": sorted({bill["id"]: bill for bill in bills}.values(), key=lambda bill: (bill["due"], bill["id"])),
         "payments": payments,
-        "benefits": benefits,
-        "claims": claims,
         "events": sorted(events, key=lambda row: row["deadline"]),
         "reviews": state.get("reviews", []),
         "preferences": state.get("preferences", {}),

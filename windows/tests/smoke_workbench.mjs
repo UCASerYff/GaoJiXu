@@ -200,16 +200,6 @@ try {
   await edit({rating:"2"});
   await textHas("#fixed-expenses","经常使用");
 
-  await selectRoute("benefits");
-  await click(fixed("benefit-edit"));
-  await edit({name:"QA 权益",kind:"weekly",subscriptionID:sub});
-  await textHas("#benefits","QA 权益");
-  await click(fixed("benefit-claim"));
-  await textHas("#benefits","本期已记");
-  await click(fixed("benefit-history"));
-  await textHas("#editor","历史记录");
-  await click("#editor-cancel");
-  await close();
   await click(".toolbar-menu summary");
   await click('[data-workbench="settings"]');
   await dialog();
@@ -217,7 +207,6 @@ try {
   await waitFor('[data-settings-panel="data"]:not([hidden]) [data-folder="widgets"]');
   await click('[data-settings="appearance"]');
   await edit({appearance:"dark"});
-  await snapshot("benefits-dark-1060-150dpi",1060,730,1.5);
   await selectRoute("fixed-expenses");
   await section("fixed-expenses");
   await click(fixed("expense-tab","bills"));
@@ -238,13 +227,17 @@ try {
   await click('[data-workbench="widgets"]');
   await section("widgets");
   await waitFor(".widget-grid .widget-adventure");
-  assert.equal(await js("document.querySelectorAll('.widget-tile').length"),5);
+  assert.equal(await js("document.querySelectorAll('.widget-tile').length"),4);
   await snapshot("widgets-dark-1040-125dpi",1040,800,1.25);
   await cdp("Page.navigate",{url:base + "?widget=calendar"});
   await waitFor(".widget-single .widget-calendar");
   await snapshot("calendar-widget-dark-420",420,580,1);
-  await cdp("Page.navigate",{url:base + "#fixed-expenses"});
+  await cdp("Page.navigate",{url:base + "?widget=benefits"});
+  await waitFor(".widget-single .widget-expenses");
+  assert.equal(await js("Boolean(document.querySelector('.widget-benefits'))"),false);
+  await cdp("Page.navigate",{url:base + "#benefits"});
   await section("fixed-expenses");
+  assert.equal(await js("location.hash"),"#fixed-expenses");
   await click(fixed("expense-tab","payments"));
   await waitFor(".fixed-item-menu summary");
   await click(".fixed-item-menu summary");
@@ -275,9 +268,8 @@ try {
   await textHas("#editor","Salary");
   await click("#editor-cancel");
   await close();
-  await click('#fixed-sections [data-route="benefits"]');
-  await textHas("#benefits","Recorded this period");
-  await snapshot("benefits-english-dark-1060",1060,730,1.5);
+  assert.equal(await js("document.querySelectorAll('#fixed-sections [data-route]').length"),2);
+  assert.equal(await js("Boolean(document.getElementById('benefits'))"),false);
 
   await selectRoute("fixed-expenses");
   await section("fixed-expenses");
@@ -296,7 +288,7 @@ try {
   await verifyPaymentsChart("light",payments);
   await verifyPaymentsChart("dark",payments);
   assert.deepEqual(failures,[]);
-  console.log("Workbench smoke passed for fixed income, expenses, payment bars, benefits, widgets, dark mode, English and relaunch routes");
+  console.log("Workbench smoke passed for fixed income, expenses, payment bars, retired link redirects, widgets, dark mode, English and relaunch routes");
 } finally {
   websocket.close();
 }

@@ -1,8 +1,8 @@
 # 搞积蓄 Windows 版
 
-面向 Windows 10/11 x64 的独立应用版本 **4.06**。Windows 构建号为 **9**，命令行显示 `4.06+9`。收支报表的本月收入和支出结构图、固定支出的十二个月实际支付图均共用各自的起点和绘图区。窄窗时柱排在对应的类别或月份及金额下方。
+面向 Windows 10/11 x64 的独立应用版本 **4.07**。Windows 构建号为 **10**，命令行显示 `4.07+10`。收支报表的本月收入和支出结构图、固定支出的十二个月实际支付图均共用各自的起点和绘图区。窄窗时柱排在对应的类别或月份及金额下方。
 
-主窗口与五个小组件优先使用本机 Microsoft Edge 或 Chromium 的应用模式。找不到可用的应用模式入口时，在系统默认浏览器中打开。服务只监听 `127.0.0.1`。
+主窗口与四个小组件优先使用本机 Microsoft Edge 或 Chromium 的应用模式。找不到可用的应用模式入口时，在系统默认浏览器中打开。服务只监听 `127.0.0.1`。
 
 关闭工作台后，「搞积蓄」仍在 Windows 通知区域运行。单击图标或选择「打开 搞积蓄」可恢复工作台。Windows 可能将图标放在隐藏图标区。选择托盘或工作台的「退出」会停止后台服务并关闭工作台和小组件。工作台有未保存的编辑时，可以返回编辑并保存，或放弃该次修改后退出。使用系统浏览器回退时，浏览器标签由浏览器管理。
 
@@ -12,14 +12,14 @@ Windows 桌面小组件可固定在前台、调整大小和位置、关闭或跳
 
 ## 安装
 
-双击构建 9 的发布安装包 `GaoJiXu-Windows-4.06-build9-x64.msi`，完成后从开始菜单打开「搞积蓄」。开始菜单还提供每日收支与积蓄、净资产、固定支出、权益打卡和勇者冒险小组件的独立入口。安装程序同时为当前 Windows 用户注册 `gaojixu://`。升级或卸载前可在应用中选择「退出」。
+双击构建 10 的发布安装包 `GaoJiXu-Windows-4.07-build10-x64.msi`，完成后从开始菜单打开「搞积蓄」。开始菜单还提供每日收支与积蓄、净资产、固定支出和勇者冒险小组件的独立入口。安装程序同时为当前 Windows 用户注册 `gaojixu://`。升级或卸载前可在应用中选择「退出」。
 
 安装程序将应用装在 `%LOCALAPPDATA%\GaoJiXu\`。通过 Windows「设置 → 应用」卸载，资料保留在原目录。此前的便携版与安装版使用相同的资料目录。
 
 下载后可以将计算结果与随包提供的 `.msi.sha256` 文件比对。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\GaoJiXu-Windows-4.06-build9-x64.msi
+Get-FileHash -Algorithm SHA256 .\GaoJiXu-Windows-4.07-build10-x64.msi
 ```
 
 安装包无 Authenticode 签名。构建 6 的隔离安装已在 Windows 11 x64 上验证。Windows 10 x64 未使用独立虚拟机验证。
@@ -37,19 +37,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 
 高清原图更新后，从 `windows/` 运行 `python generate_icon.py` 可重建随程序和 MSI 打包的 ICO。
 
-- `GaoJiXu-Windows-4.06-x64.msi`
-- `GaoJiXu-Windows-4.06-x64.msi.sha256`
+- `GaoJiXu-Windows-4.07-x64.msi`
+- `GaoJiXu-Windows-4.07-x64.msi.sha256`
 
-GitHub Actions 在 Windows 运行器上构建并静默安装 MSI，验证两个 x64 程序、应用资源、适用的已有 Windows 资料、流水、月供数据库、财务快照及卸载保留资料。安装包和校验文件作为 `GaoJiXu-Windows-4.06-x64` 构建产物上传。
+GitHub Actions 在 Windows 运行器上构建并静默安装 MSI，验证两个 x64 程序、应用资源、适用的已有 Windows 资料、流水、月供数据库、财务快照及卸载保留资料。安装包和校验文件作为 `GaoJiXu-Windows-4.07-x64` 构建产物上传。
 
 在已有安装候选的工作区，可以用独立路径构建并验收新版。升级测试从旧 MSI 安装应用，写入合成资料，再核对新版安装、降级保护和卸载保留资料。已安装正式版的 Windows 用户可用 `--isolate-identities` 为两份原始 MSI 生成临时实例转换。转换保留各自的版本和程序负载，使用独立的应用、升级家族和组件标识，并将临时安装目录和注册表键写入转换后的 MSI 表。测试实例禁用开始菜单快捷方式和 URI 协议注册。
 
 ```powershell
 cd windows
-$work = Join-Path $PWD 'build/release-4.06.9'
+$work = Join-Path $PWD 'build/release-4.07.10'
 $candidate = Join-Path $work 'candidate'
 .\build.ps1 -BuildDirectory $work -DistributionDirectory $candidate
-python tests/smoke_install.py "$candidate/GaoJiXu-Windows-4.06-x64.msi" --upgrade-from dist/GaoJiXu-Windows-4.06-build8-x64.msi --isolate-identities
+python tests/smoke_install.py "$candidate/GaoJiXu-Windows-4.07-x64.msi" --upgrade-from dist/GaoJiXu-Windows-4.06-build9-x64.msi --isolate-identities
 ```
 
 只跑源码测试可使用以下命令。
@@ -96,8 +96,10 @@ PYTHONPATH=src python3 launch.py --data-dir /tmp/gaojixu-dev --no-browser --port
 | `--inspect` | 只读打印账户、流水、目标和等级条数，不打印备注 |
 | `--widget-snapshot` | 写出 schema 2 的 `gaojixu-widget.json` |
 | `--notify-monthly-change` | 在同一 Windows 会话中唤醒使用同一资料目录的月供接收器 |
-| `--version` | 打印 `4.06+9` |
-| `--widget TYPE` | 打开每日收支与积蓄 `calendar`、净资产 `net-worth`、固定支出 `expenses`、权益打卡 `benefits` 或勇者冒险 `adventure` 窗口 |
+| `--version` | 打印 `4.07+10` |
+| `--widget TYPE` | 打开每日收支与积蓄 `calendar`、净资产 `net-worth`、固定支出 `expenses`或勇者冒险 `adventure` 窗口 |
+
+旧版的权益页面链接会打开固定支出，旧权益小组件快捷方式会打开固定支出小组件。以前保存的权益与领取记录保留在月供库中。
 
 ## 数据
 
@@ -108,7 +110,7 @@ PYTHONPATH=src python3 launch.py --data-dir /tmp/gaojixu-dev --no-browser --port
 | `gaojixu-widget.json` | schema 2 财务快照，另有一份在 `IsolatedWidgetGroup/`。高于 schema 2 的已有快照不覆盖 |
 | `monthly-account-bindings.json` | 固定支出订阅与流水账户的绑定 |
 | `monthly-reconciliation.json` | 月供对账状态及 `__integratedMonthly` 已管理流水标识 |
-| `IntegratedFinance/Monthly/monthly.sqlite` | 固定支出与权益。表 `state` 只有一行 id=1 的 JSON，和 Mac 相同 |
+| `IntegratedFinance/Monthly/monthly.sqlite` | 固定支出，保留历史权益和领取记录。表 `state` 只有一行 id=1 的 JSON，和 Mac 相同 |
 | `IntegratedFinance/Monthly/authority.json` | 模式 `new` 或已核验的 `migrated` 才允许写入 |
 
 Mac 上账本位于 `~/Library/Application Support/GaoSeries/Savings/`，小组件和月供位于 App Group `5G96498KGJ.com.gaojixu.savings`。Windows 不会读取那两个 macOS 路径，也不会注册 App Group。可以把 `library.json` 放到 Windows 资料目录；月供库放到 `IntegratedFinance/Monthly/`。两边不要同时写入同一份文件。
@@ -127,11 +129,11 @@ Mac 上账本位于 `~/Library/Application Support/GaoSeries/Savings/`，小组�
 | --- | --- |
 | 总览 | 净资产、本月收支和预算、最近流水、当前目标和可展开的月历 |
 | 收支 | 流水编辑、搜索和筛选、账户、信用账户和余额调整、同币种和跨币种转账、预算、周期记账、CSV 导入审核箱、报表 |
-| 固定收支 | 固定收入确认到账、订阅、待核实账期、支付历史和账户绑定、权益领取、到期事项、复盘及对账 |
+| 固定收支 | 固定收入确认到账、订阅、待核实账期、支付历史和账户绑定、到期事项、复盘及对账 |
 | 攒钱 | 目标管理、积蓄明细、存取对应流水、统计和冒险奖励 |
 | 冒险 | WebGL 立体战斗与营地、视角旋转与缩放、自动结算、装备、技能、宠物、祈愿、图鉴和成就 |
 | 设置 | 模块设置、外观与数据页。可在文件资源管理器打开现用资料和小组件快照目录 |
-| Windows 集成 | 系统托盘、固定支出提醒与测试通知、`gaojixu://` 跳转、可独立固定与恢复的五种桌面小组件 |
+| Windows 集成 | 系统托盘、固定支出提醒与测试通知、`gaojixu://` 跳转、可独立固定与恢复的四种桌面小组件 |
 
 从「流水」或工作台更多菜单打开「导入审核箱」。UTF-8 CSV 每批最多 2,000 行。上传后，批次会存为待审核。每笔记录可以确认、保留待审核或跳过。疑似重复附上判断依据，确认重复入账需要逐笔选择。同批次内，存在明确转账线索且能唯一配对的同币种收支，可以审核后合并成一笔账户转账。
 

@@ -266,5 +266,3 @@ dialog form { display:flex; flex-direction:column; max-height:calc(100dvh - 32px
 .widget-expense { color:var(--red); }
 .widget-income { color:var(--green); }
 .widget-saving { color:var(--orange); }
-.widget-claim { min-height:25px; padding-inline:6px; }
-.widget-claim .ui-icon { margin:0; }

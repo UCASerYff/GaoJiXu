@@ -65,7 +65,7 @@ def run_child(work, browser, attempt_notification):
     store = Store(work / "library")
     store.create_library()
     store.create_monthly()
-    monthly.save_subscription(store.directory, {"name": "Synthetic plan", "price": 12, "benefit": "daily"}, store.now)
+    monthly.save_subscription(store.directory, {"name": "Synthetic plan", "price": 12}, store.now)
     server = serve(store, open_browser=False)
     launched = []
 
@@ -84,11 +84,12 @@ def run_child(work, browser, attempt_notification):
             manager.open(kind)
             until(lambda: manager.request({"command": "status", "widget": kind}, lambda _: None)["windows"][kind]["open"],
                   kind + " actual Chromium app HWND")
-        note("five Chromium app-mode HWNDs separately observed on private desktop")
+        note("four Chromium app-mode HWNDs separately observed on private desktop")
         action = subprocess.run(
             ["node", str(ROOT / "tests" / "smoke_desktop_widgets.mjs"), server.url, str(manager.base / "Chromium" / "DevToolsActivePort")],
-            capture_output=True, encoding="utf-8", timeout=40, check=True,
+            capture_output=True, encoding="utf-8", timeout=40,
         )
+        assert action.returncode == 0, action.stdout + action.stderr
         note(action.stdout.strip())
         calendar = manager._active["calendar"]
         assert native.topmost(calendar.hwnd)

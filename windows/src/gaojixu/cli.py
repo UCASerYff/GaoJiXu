@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from gaojixu.desktop import DesktopSession, RunningInstance, WIDGETS, forward_target, target_for
+from gaojixu.desktop import DesktopSession, RunningInstance, WIDGETS, forward_target, target_for, widget_name
 from gaojixu.errors import AppError
 from gaojixu.monthly_signal import signal as signal_monthly_change
 from gaojixu.monthly_notices import MonthlyNotices
@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--create-empty", action="store_true")
     parser.add_argument("--inspect", action="store_true")
     parser.add_argument("--widget-snapshot", action="store_true")
-    parser.add_argument("--widget", choices=WIDGETS)
+    parser.add_argument("--widget", type=widget_name, choices=WIDGETS)
     parser.add_argument("--notify-monthly-change", action="store_true")
     parser.add_argument("link", nargs="?")
     args = parser.parse_args(argv)

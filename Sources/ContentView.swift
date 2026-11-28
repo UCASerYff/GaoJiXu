@@ -18,19 +18,28 @@ struct ContentView: View {
     @EnvironmentObject private var store: SavingsStore
     @EnvironmentObject private var settings: SavingsSettings
     @Environment(\.colorScheme) private var colorScheme
-    @SceneStorage("gqns.page.Savings") private var selection: SavingsSection = .overview
+    @SceneStorage("gqns.page.Savings") private var storedSection = SavingsSection.overview.rawValue
     @State private var showingRecordEditor = false
     @State private var ledgerEditorSession: LedgerEditorSession?
     @State private var showingCSVReview = false
     @AppStorage(GQNSLanguage.key) private var appLanguage = "system"
 
+    private var selection: SavingsSection {
+        get { SavingsSection.restoring(storedSection) ?? .overview }
+        nonmutating set { storedSection = newValue.rawValue }
+    }
+
+    private var sectionBinding: Binding<SavingsSection> {
+        Binding(get: { selection }, set: { selection = $0 })
+    }
+
     var body: some View {
         ZStack {
             settings.canvasColor(for: colorScheme).ignoresSafeArea()
             VStack(spacing: 0) {
-                WorkbenchTopNavigation(selection: $selection)
+                WorkbenchTopNavigation(selection: sectionBinding)
                 Divider().opacity(0.55)
-                WorkbenchWorkspaceTabs(selection: $selection)
+                WorkbenchWorkspaceTabs(selection: sectionBinding)
                 detail
             }
         }
@@ -100,7 +109,7 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("GaoSeries.savings.game"))) { _ in selection = .adventure }
         .onReceive(NotificationCenter.default.publisher(for: .gaojixuSelectSection)) { notification in
             guard let rawValue = notification.userInfo?["section"] as? String,
-                  let section = SavingsSection(rawValue: rawValue) else { return }
+                  let section = SavingsSection.restoring(rawValue) else { return }
             selection = section
         }
         .disabled(store.loadFailed)
@@ -138,8 +147,7 @@ struct ContentView: View {
         case "goals": selection = .goals
         case "adventure": selection = .adventure
         case "fixed-income": selection = .fixedIncome
-        case "fixed-expenses", "today": selection = .fixedExpenses
-        case "benefits": selection = .benefits
+        case "fixed-expenses", "today", "benefits": selection = .fixedExpenses
         default: break
         }
     }
@@ -147,7 +155,7 @@ struct ContentView: View {
     @ViewBuilder
     private var detail: some View {
         switch selection {
-        case .overview: FinancialOverviewView(selection: $selection)
+        case .overview: FinancialOverviewView(selection: sectionBinding)
         case .ledger: LedgerView()
         case .accounts: AccountsView()
         case .budgets: BudgetsView()
@@ -155,7 +163,7 @@ struct ContentView: View {
         case .goals: GoalsView()
         case .records: RecordsView()
         case .analytics: AnalyticsView()
-        case .fixedIncome, .fixedExpenses, .benefits: FixedFinanceWorkspace(selection: $selection)
+        case .fixedIncome, .fixedExpenses: FixedFinanceWorkspace(selection: sectionBinding)
         case .adventure: AdventureHubView()
         }
     }

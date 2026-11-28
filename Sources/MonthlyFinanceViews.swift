@@ -7,16 +7,12 @@ private enum MonthlyFinanceSheet: Identifiable {
   case sub(MonthlyFinanceSubscription?)
   case payment(MonthlyFinanceBill, MonthlyFinancePayment?)
   case event(MonthlyFinanceEvent?)
-  case benefit(MonthlyFinanceBenefitItem?)
-  case claims(MonthlyFinanceBenefitItem)
   case settings
   var id: String {
     switch self {
     case .sub(let s): return "sub-" + (s?.id.uuidString ?? "new")
     case .payment(let b, _): return "payment-" + b.id
     case .event(let e): return "event-" + (e?.id.uuidString ?? "new")
-    case .benefit(let b): return "benefit-" + (b?.id.uuidString ?? "new")
-    case .claims(let b): return "claims-" + b.id.uuidString
     case .settings: return "settings"
     }
   }
@@ -25,8 +21,6 @@ private enum MonthlyFinanceSheet: Identifiable {
     case .sub(let s): MonthlyFinanceSubscriptionEditor(existing: s, state: state)
     case .payment(let b, let e): MonthlyFinancePaymentEditor(bill: b, existing: e)
     case .event(let e): MonthlyFinanceEventEditor(existing: e, state: state)
-    case .benefit(let b): MonthlyFinanceBenefitEditor(existing: b, state: state)
-    case .claims(let b): MonthlyFinanceClaimHistory(benefit: b)
     case .settings: MonthlyFinanceSettingsEditor(state: state)
     }
   }
@@ -72,15 +66,11 @@ private enum MonthlyFinanceDestructive: Identifiable {
   case sub(MonthlyFinanceSubscription)
   case pay(MonthlyFinancePayment)
   case event(MonthlyFinanceEvent)
-  case benefit(MonthlyFinanceBenefitItem)
-  case claim(MonthlyFinanceClaim)
   var id: String {
     switch self {
     case .sub(let a): return a.id.uuidString
     case .pay(let a): return a.id
     case .event(let a): return a.id.uuidString
-    case .benefit(let a): return a.id.uuidString
-    case .claim(let a): return a.id
     }
   }
   var title: String {
@@ -88,24 +78,18 @@ private enum MonthlyFinanceDestructive: Identifiable {
     case .sub: return "删除订阅及其支付历史？"
     case .pay: return "撤销这笔支付确认？"
     case .event: return "删除到期事项？"
-    case .benefit: return "删除权益和它的打卡历史？"
-    case .claim: return "撤销这次权益打卡？"
     }
   }
   @MainActor func run(_ store: MonthlyFinanceStore) {
     store.update { s in
       switch self {
       case .sub(let x): try MonthlyFinanceEngine.removeSubscription(&s, expected: x)
-      case .benefit(let x): try MonthlyFinanceEngine.removeBenefit(&s, expected: x)
       case .pay(let x):
         guard s.payments.contains(x) else { throw MonthlyFinanceError("支付记录已变化。") }
         s.payments.removeAll { $0.id == x.id }
       case .event(let x):
         guard s.events.contains(x) else { throw MonthlyFinanceError("事项已变化。") }
         s.events.removeAll { $0.id == x.id }
-      case .claim(let x):
-        guard s.claims.contains(x) else { throw MonthlyFinanceError("打卡已变化。") }
-        s.claims.removeAll { $0.id == x.id }
       }
     }
   }
@@ -268,104 +252,6 @@ struct FixedExpenseView: View {
         Button("编辑") { sheet = .event(e) }
         Button("删除") { remove = .event(e) }
       }
-    }
-  }
-}
-
-struct MonthlyBenefitsView: View {
-  @ObservedObject private var store = MonthlyFinanceStore.shared
-  @State private var sheet: MonthlyFinanceSheet?
-  @State private var remove: MonthlyFinanceDestructive?
-  @State private var archived = false
-  var body: some View {
-    Group {
-      if let s = store.state {
-        ScrollView {
-          LazyVStack(alignment: .leading, spacing: 14) {
-            HStack {
-              Text("权益打卡").font(.largeTitle.bold())
-              Spacer()
-              Toggle("含归档", isOn: $archived)
-              Button("新增权益") { sheet = .benefit(nil) }
-            }
-            Text("记录日领或周领权益；实际领取请到服务平台完成。").foregroundStyle(.secondary)
-            let rows = s.benefits.filter { archived || !$0.archived }
-            if rows.isEmpty { Text("暂无权益，可新建独立权益或关联订阅。") }
-            ForEach(rows) { b in
-              let key = MonthlyFinanceEngine.claimKey(b, s, on: Date())
-              let recorded = key.map { k in s.claims.contains { $0.id == k } } ?? false
-              MonthlyFinanceRow(
-                title: b.name,
-                detail:
-                  "\(b.kind.title(false)) · \(b.subscriptionID.flatMap{id in s.subscriptions.first{$0.id==id}?.name} ?? "独立权益")"
-                  + (b.archived ? " · 归档" : "")
-              ) {
-                Button(recorded ? "本期已记" : "标记已领取") {
-                  store.update {
-                    try MonthlyFinanceEngine.claim(&$0, benefitID: b.id, date: Date())
-                  }
-                }.disabled(recorded || key == nil)
-                Button("历史 / 补记") { sheet = .claims(b) }
-                Menu("更多") {
-                  Button("编辑") { sheet = .benefit(b) }
-                  Button("删除权益及历史", role: .destructive) { remove = .benefit(b) }
-                }
-              }
-            }
-          }.padding(24)
-        }
-      } else {
-        MonthlyFinanceUnavailable(store: store)
-      }
-    }.onAppear { store.reload() }.sheet(item: $sheet) { route in
-      if let s = store.state {
-        route.editor(s).environment(\.timeZone, MonthlyFinanceEngine.calendar(s).timeZone)
-      }
-    }.alert(item: $remove) { a in
-      Alert(
-        title: Text(a.title), primaryButton: .destructive(Text("删除")) { a.run(store) },
-        secondaryButton: .cancel())
-    }.safeAreaInset(edge: .bottom) {
-      if let p = store.problem { Text(p).foregroundStyle(.red).padding(6) }
-    }
-  }
-}
-
-private struct MonthlyFinanceClaimHistory: View {
-  let benefit: MonthlyFinanceBenefitItem
-  @ObservedObject var store = MonthlyFinanceStore.shared
-  @Environment(\.dismiss) var dismiss
-  @State private var day = Date()
-  @State private var remove: MonthlyFinanceDestructive?
-  var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      HStack {
-        Text(benefit.name).font(.title2)
-        Spacer()
-        Button("完成") { dismiss() }
-      }
-      DatePicker("补记日期", selection: $day, in: ...Date(), displayedComponents: .date)
-      Button("记录该周期已领取") {
-        store.update { try MonthlyFinanceEngine.claim(&$0, benefitID: benefit.id, date: day) }
-      }
-      if let s = store.state {
-        let rows = s.claims.filter { $0.id.hasPrefix("\(benefit.id)|") }.sorted {
-          $0.date > $1.date
-        }
-        if rows.isEmpty { Text("没有打卡记录。") }
-        List(rows) { c in
-          HStack {
-            Text(MonthlyFinanceEngine.day(c.date, s) + (c.backfill ? " · 补记" : ""))
-            Spacer()
-            Button("撤销") { remove = .claim(c) }
-          }
-        }
-      }
-      if let p = store.problem { Text(p).foregroundStyle(.red) }
-    }.padding(20).frame(minWidth: 430, minHeight: 350).alert(item: $remove) { a in
-      Alert(
-        title: Text(a.title), primaryButton: .destructive(Text("撤销打卡")) { a.run(store) },
-        secondaryButton: .cancel())
     }
   }
 }

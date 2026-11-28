@@ -25,7 +25,9 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
-WIDGET_TYPES = ("calendar", "net-worth", "expenses", "benefits", "adventure")
+WIDGET_TYPES = ("calendar", "net-worth", "expenses", "adventure")
+BENEFITS_LINK = "搞积蓄 - 权益打卡.lnk"
+BENEFITS_RETIREMENT_VERSION = (4, 7)
 APP_REGISTRY = r"Software\GaoSeries\GaoJiXu"
 PROTOCOL_REGISTRY = r"Software\Classes\gaojixu"
 SHELL_COMPONENTS = {"GaoJiXuProtocol", "GaoJiXuShortcuts"}
@@ -47,7 +49,9 @@ def msi_property(package: Path, key: str) -> str:
 
 
 def verify_shell_entries(package: Path) -> dict[int, bytes]:
-    verify_icons = tuple(map(int, msi_property(package, "ProductVersion").split("."))) >= (4, 6, 9)
+    version = tuple(map(int, msi_property(package, "ProductVersion").split(".")))
+    verify_icons = version >= (4, 6, 9)
+    widget_types = WIDGET_TYPES if version >= BENEFITS_RETIREMENT_VERSION else (*WIDGET_TYPES, "benefits")
     database = msilib.OpenDatabase(str(package), msilib.MSIDBOPEN_READONLY)
     try:
         template = database.GetSummaryInformation(0).GetProperty(7)
@@ -57,7 +61,7 @@ def verify_shell_entries(package: Path) -> dict[int, bytes]:
         shortcuts = msi_records(database, "SELECT `Shortcut`, `Target`, `Arguments`, `Icon_`, `IconIndex` FROM `Shortcut`")
         assert all(row.GetString(2) == "[INSTALLFOLDER]GaoJiXu.exe" for row in shortcuts)
         arguments = [row.GetString(3) or "" for row in shortcuts]
-        assert sorted(arguments) == sorted(["", *(f"--widget {widget}" for widget in WIDGET_TYPES)])
+        assert sorted(arguments) == sorted(["", *(f"--widget {widget}" for widget in widget_types)])
         registry = {row.GetString(1): row.GetString(2) for row in msi_records(
             database, "SELECT `Key`, `Value` FROM `Registry` WHERE `Root` = 1")}
         assert registry.get(PROTOCOL_REGISTRY + r"\shell\open\command") == '"[INSTALLFOLDER]GaoJiXu.exe" "%1"'
@@ -556,7 +560,7 @@ def installed_app(executable: Path, profile: Path, env: dict[str, str]):
 
 def exercise_installed_app(
     executable: Path, profile: Path, library: Path, env: dict[str, str], *, existing=False, integration_cli=None,
-    redesigned=False,
+    redesigned=False, retired_benefits=False,
 ) -> None:
     with installed_app(executable, profile, env) as request:
         page = request("/")
@@ -571,6 +575,16 @@ def exercise_installed_app(
         assert b"widget-calendar-grid" in request("/assets/widgets.js")
         assert b"/api/settings/folder" in request("/assets/workbench.js")
         state = json.loads(request("/api/state"))
+        if retired_benefits:
+            assert b'id="benefits"' not in page
+            assert not {"benefits", "claims"}.intersection(state["monthly"])
+            for endpoint in ("benefit", "claim"):
+                try:
+                    request(f"/api/monthly/{endpoint}", {"name": "Retired MSI test", "kind": "daily"})
+                except HTTPError as exc:
+                    assert exc.code == 400 and json.load(exc)["error"] == "没有这个操作。"
+                else:
+                    raise AssertionError(f"Retired endpoint accepted a write: {endpoint}")
         if existing:
             assert any(row["note"] == "MSI smoke" for row in state["entries"])
             assert state["settings"]["language"] == "en"
@@ -611,6 +625,28 @@ def exercise_installed_app(
             else:
                 raise AssertionError("The app claimed a notification was submitted when no desktop tray was started")
             exercise_monthly_signal(request, profile, integration_cli, env)
+
+
+def legacy_benefit_rows(profile: Path):
+    database = profile / "IntegratedFinance" / "Monthly" / "monthly.sqlite"
+    with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)) as connection:
+        data, = connection.execute("SELECT json FROM state WHERE id = 1").fetchone()
+    state = json.loads(data)
+    return state["benefits"], state["claims"]
+
+
+def seed_legacy_benefit(executable: Path, profile: Path, env: dict[str, str]):
+    with installed_app(executable, profile, env) as request:
+        subscription = json.loads(request("/api/state"))["monthly"]["subscriptions"][0]
+        benefit = json.loads(request("/api/monthly/benefit", {
+            "name": "Legacy benefit for upgrade", "kind": "daily", "subscriptionID": subscription["id"],
+        }))["result"]
+        claim = json.loads(request("/api/monthly/claim", {"id": benefit["id"]}))["result"]
+        assert claim["claimed"]
+    benefits, claims = legacy_benefit_rows(profile)
+    assert any(row["id"] == benefit["id"] for row in benefits)
+    assert any(row["id"] == claim["id"] for row in claims)
+    return benefits, claims
 
 
 def exercise_monthly_signal(request, profile: Path, cli: Path, env: dict[str, str]):
@@ -737,17 +773,21 @@ def smoke(package: Path, legacy: Path | None, register_shell: bool, upgrade_from
     supports_integration = version_parts >= (4, 6, 3)
     redesigned = version_parts >= (4, 6, 4)
     reviews_csv = version_parts >= (4, 6, 6)
+    retired_benefits = version_parts >= BENEFITS_RETIREMENT_VERSION
     upgrade_code = msi_property(package, "UpgradeCode")
     if isolate_identities and register_shell:
         raise ValueError("An isolated MSI test may not register the production Shell entries.")
     if not isolate_identities:
         ensure_no_installed_version(upgrade_code)
     previous_code = None
+    previous_has_benefits = False
     if upgrade_from:
         verify_checksum(upgrade_from)
         verify_shell_entries(upgrade_from)
         assert msi_property(upgrade_from, "UpgradeCode") == upgrade_code
         previous_code = msi_property(upgrade_from, "ProductCode")
+        previous_version = tuple(map(int, msi_property(upgrade_from, "ProductVersion").split(".")))
+        previous_has_benefits = previous_version < BENEFITS_RETIREMENT_VERSION
         assert previous_code != product_code
     protocol_key = PROTOCOL_REGISTRY
     menu = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "搞积蓄"
@@ -795,15 +835,20 @@ def smoke(package: Path, legacy: Path | None, register_shell: bool, upgrade_from
         app = install / "GaoJiXu.exe"
         cli = install / "GaoJiXu-cli.exe"
         library = None
+        historical_benefits = None
         try:
             if upgrade_from:
                 run_msi("/i", str(upgrade_from), properties + previous_instance)
                 assert ctypes.windll.msi.MsiQueryProductStateW(previous_code) == 5
+                if register_shell and previous_has_benefits:
+                    assert (menu / BENEFITS_LINK).is_file()
                 if previous_transform:
                     verify_registered_transform(previous_code, previous_transform)
                 assert not profile.exists()
                 library = legacy_fixture(profile, cli, None, env)
                 exercise_installed_app(app, profile, library, env)
+                if retired_benefits and previous_has_benefits:
+                    historical_benefits = seed_legacy_benefit(app, profile, env)
                 original = data_manifest(profile)
             run_msi("/i", str(package), properties + current_instance)
             if current_transform:
@@ -820,14 +865,21 @@ def smoke(package: Path, legacy: Path | None, register_shell: bool, upgrade_from
             assert Path(read_registry(test_key, "InstallPath")) == install
             if register_shell:
                 assert read_registry(protocol_key + r"\shell\open\command") == f'"{app}" "%1"'
-                assert len(list(menu.glob("*.lnk"))) == 6
+                assert len(list(menu.glob("*.lnk"))) == len(WIDGET_TYPES) + (1 if retired_benefits else 2)
+                assert (menu / BENEFITS_LINK).is_file() != retired_benefits
             assert subprocess.check_output([str(cli), "--version"], env=env, text=True, timeout=30).strip() == version
             if library is None:
                 assert not profile.exists()
                 library = legacy_fixture(profile, cli, legacy, env, old_schema=True)
             integration_cli = cli if supports_integration else None
             exercise_installed_app(app, profile, library, env, existing=bool(upgrade_from),
-                                   integration_cli=integration_cli, redesigned=redesigned)
+                                   integration_cli=integration_cli, redesigned=redesigned,
+                                   retired_benefits=retired_benefits)
+            if historical_benefits is not None:
+                assert legacy_benefit_rows(profile) == historical_benefits
+                print("MSI upgrade preserved historical benefits and claims through installed-app writes")
+                if register_shell:
+                    print("MSI upgrade removed the old benefits shortcut from the Start menu")
             if reviews_csv:
                 exercise_csv_review(app, profile, env)
             exercise_protected_library(app, root / "只读验证", env)

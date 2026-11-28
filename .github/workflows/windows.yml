@@ -20,11 +20,11 @@ jobs:
       - name: Run regressions and build the installer
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
       - name: Smoke-test installation, existing data and uninstall
-        run: python tests/smoke_install.py dist/GaoJiXu-Windows-4.06-x64.msi --register-shell
+        run: python tests/smoke_install.py dist/GaoJiXu-Windows-4.07-x64.msi --register-shell
       - uses: actions/upload-artifact@v4
         with:
-          name: GaoJiXu-Windows-4.06-x64
+          name: GaoJiXu-Windows-4.07-x64
           if-no-files-found: error
           path: |
-            windows/dist/GaoJiXu-Windows-4.06-x64.msi
-            windows/dist/GaoJiXu-Windows-4.06-x64.msi.sha256
+            windows/dist/GaoJiXu-Windows-4.07-x64.msi
+            windows/dist/GaoJiXu-Windows-4.07-x64.msi.sha256
