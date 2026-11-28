@@ -22,9 +22,11 @@ _WM_NULL = 0
 _WM_CLOSE = 0x0010
 _WM_DESTROY = 0x0002
 _WM_CONTEXTMENU = 0x007B
+_WM_DISPLAYCHANGE = 0x007E
 _WM_TIMER = 0x0113
 _WM_LBUTTONUP = 0x0202
 _WM_RBUTTONUP = 0x0205
+_WM_DPICHANGED = 0x02E0
 _WM_TRAY = 0x8001
 _WM_NOTICE = 0x8002
 _NIN_SELECT = 0x0400
@@ -41,6 +43,7 @@ _ICON_ID = 1
 _TRAY_TIMER = 1
 _SM_CXSMICON, _SM_CYSMICON = 49, 50
 _IMAGE_ICON, _LR_LOADFROMFILE = 1, 0x10
+_PER_MONITOR_AWARE, _PER_MONITOR_AWARE_V2 = -3, -4
 _CLICK_INTERVAL = .25
 
 
@@ -77,6 +80,10 @@ def _api(dll, name, returns, *args):
     return function
 
 
+def _optional_api(dll, name, returns, *args):
+    return _api(dll, name, returns, *args) if hasattr(dll, name) else None
+
+
 class _Windows:
     def __init__(self):
         user = ctypes.WinDLL("user32", use_last_error=True)
@@ -103,8 +110,8 @@ class _Windows:
             shell, "Shell_NotifyIconGetRect", win.LONG, ctypes.POINTER(_NotifyIconIdentifier), ctypes.POINTER(win.RECT),
         )
         self.extract_icon = _api(
-            shell, "ExtractIconExW", win.UINT, win.LPCWSTR, ctypes.c_int, ctypes.POINTER(win.HICON),
-            ctypes.POINTER(win.HICON), win.UINT,
+            shell, "SHDefExtractIconW", win.LONG, win.LPCWSTR, ctypes.c_int, win.UINT,
+            ctypes.POINTER(win.HICON), ctypes.POINTER(win.HICON), win.UINT,
         )
         self.load_icon = _api(user, "LoadIconW", win.HICON, win.HINSTANCE, win.LPVOID)
         self.load_image = _api(
@@ -112,6 +119,11 @@ class _Windows:
             ctypes.c_int, ctypes.c_int, win.UINT,
         )
         self.metrics = _api(user, "GetSystemMetrics", ctypes.c_int, ctypes.c_int)
+        self.metrics_for_dpi = _optional_api(user, "GetSystemMetricsForDpi", ctypes.c_int, ctypes.c_int, win.UINT)
+        self.find_window = _api(user, "FindWindowW", win.HWND, win.LPCWSTR, win.LPCWSTR)
+        self.dpi_for_window = _optional_api(user, "GetDpiForWindow", win.UINT, win.HWND)
+        self.system_dpi = _optional_api(user, "GetDpiForSystem", win.UINT)
+        self.set_thread_dpi_context = _optional_api(user, "SetThreadDpiAwarenessContext", win.HANDLE, win.HANDLE)
         self.destroy_icon = _api(user, "DestroyIcon", win.BOOL, win.HICON)
         self.create_menu = _api(user, "CreatePopupMenu", win.HMENU)
         self.add_menu_item = _api(user, "AppendMenuW", win.BOOL, win.HMENU, win.UINT, win.WPARAM, win.LPCWSTR)
@@ -123,6 +135,15 @@ class _Windows:
             user, "TrackPopupMenu", ctypes.c_int, win.HMENU, win.UINT, ctypes.c_int, ctypes.c_int,
             ctypes.c_int, win.HWND, ctypes.POINTER(win.RECT),
         )
+
+    def tray_icon_size(self, window, dpi_hint=0) -> tuple[int, int]:
+        # The message sink can belong to a different monitor than Explorer's notification area.
+        if self.metrics_for_dpi and self.dpi_for_window:
+            taskbar = self.find_window("Shell_TrayWnd", None)
+            dpi = (self.dpi_for_window(taskbar) if taskbar else 0) or dpi_hint or self.dpi_for_window(window)
+            dpi = dpi or (self.system_dpi() if self.system_dpi else 0) or 96
+            return self.metrics_for_dpi(_SM_CXSMICON, dpi), self.metrics_for_dpi(_SM_CYSMICON, dpi)
+        return self.metrics(_SM_CXSMICON), self.metrics(_SM_CYSMICON)
 
 
 def _short_text(value: str, capacity: int) -> str:
@@ -152,6 +173,8 @@ class TrayIcon:
         self._closing = threading.Event()
         self._window = None
         self._icon = None
+        self._icon_size = None
+        self._owns_icon = False
         self._registered = False
         self._modern_events = False
         self._tracking_menu = False
@@ -180,22 +203,33 @@ class TrayIcon:
         data.identifier = _ICON_ID
         return data
 
-    def _attach(self, window) -> None:
+    def _attach(self, window, *, dpi_hint=0, refresh=False) -> None:
+        api = self._windows
+        size = api.tray_icon_size(window, dpi_hint)
+        changed = self._icon is None or size != self._icon_size
+        if refresh and self._registered and not changed:
+            return
+        icon, owned = self._load_app_icon(size) if changed else (self._icon, self._owns_icon)
         data = self._icon_data(window)
         data.flags = _NIF_MESSAGE | _NIF_ICON | _NIF_TIP | _NIF_SHOWTIP
         data.message = _WM_TRAY
-        data.icon = self._icon
+        data.icon = icon
         data.tip = APP_NAME
-        api = self._windows
-        self._modern_events = False
-        self._registered = bool(api.notify(_NIM_ADD, ctypes.byref(data)))
-        if not self._registered:
-            # Windows also broadcasts TaskbarCreated after a DPI change. Reuse the same icon if it still exists.
-            self._registered = bool(api.notify(_NIM_MODIFY, ctypes.byref(data)))
-        if self._registered:
-            version = self._icon_data(window)
-            version.version = 4
-            self._modern_events = bool(api.notify(_NIM_SETVERSION, ctypes.byref(version)))
+        if not (refresh and self._registered and api.notify(_NIM_MODIFY, ctypes.byref(data))):
+            # A TaskbarCreated broadcast can mean that Explorer restarted or just changed DPI.
+            self._modern_events = False
+            self._registered = bool(api.notify(_NIM_ADD, ctypes.byref(data)))
+            if not self._registered:
+                self._registered = bool(api.notify(_NIM_MODIFY, ctypes.byref(data)))
+            if self._registered:
+                version = self._icon_data(window)
+                version.version = 4
+                self._modern_events = bool(api.notify(_NIM_SETVERSION, ctypes.byref(version)))
+        if changed and (self._registered or self._icon is None):
+            self._release_icon()
+            self._icon, self._icon_size, self._owns_icon = icon, size, owned
+        elif changed and owned:
+            api.destroy_icon(icon)
 
     def _poll_notice(self, window) -> None:
         if not self._registered or self._next_notice is None:
@@ -331,36 +365,48 @@ class TrayIcon:
                 if not self._closing.is_set():
                     self._attach(window)
                 return 0
+            if message in {_WM_DPICHANGED, _WM_DISPLAYCHANGE}:
+                if not self._closing.is_set():
+                    dpi = wparam & 0xFFFF if message == _WM_DPICHANGED else 0
+                    self._attach(window, dpi_hint=dpi, refresh=True)
+                return 0
         except Exception:
             _log.exception("Windows notification area callback failed")
         return self._windows.default_procedure(window, message, wparam, lparam)
 
-    def _load_app_icon(self):
+    def _load_app_icon(self, size):
         api = self._windows
         if self._icon_path:
             from_file = api.load_image(
                 None, os.fspath(self._icon_path), _IMAGE_ICON,
-                api.metrics(_SM_CXSMICON), api.metrics(_SM_CYSMICON), _LR_LOADFROMFILE,
+                *size, _LR_LOADFROMFILE,
             )
             if from_file:
-                return from_file
+                return from_file, True
         embedded = win.HICON()
-        api.extract_icon(sys.executable, 0, None, ctypes.byref(embedded), 1)
-        return embedded.value
+        # SHDefExtractIconW expects the requested width in the low word for its first output.
+        api.extract_icon(sys.executable, 0, 0, ctypes.byref(embedded), None, size[0])
+        if embedded.value:
+            return embedded.value, True
+        return api.load_icon(None, 32512), False
+
+    def _release_icon(self):
+        if self._icon and self._owns_icon:
+            self._windows.destroy_icon(self._icon)
+        self._icon, self._icon_size, self._owns_icon = None, None, False
 
     def _run(self) -> None:
         api = self._windows
+        if api.set_thread_dpi_context and not api.set_thread_dpi_context(_PER_MONITOR_AWARE_V2):
+            api.set_thread_dpi_context(_PER_MONITOR_AWARE)
         instance = api.module_handle(None)
         class_name = f"GaoJiXuNotificationArea_{os.getpid()}_{threading.get_ident()}"
         window_class = _WindowClass(procedure=self._callback, instance=instance, name=class_name)
-        owned_icon = None
         registered_class = api.register_class(ctypes.byref(window_class))
         if not registered_class:
             self._ready.set()
             return
         try:
-            owned_icon = self._load_app_icon()
-            self._icon = owned_icon or api.load_icon(None, 32512)
             self._window = api.create_window(0, class_name, APP_NAME, 0, 0, 0, 0, 0, None, None, instance, None)
             if not self._window:
                 return
@@ -382,8 +428,7 @@ class TrayIcon:
                 _, _, done, result = self._notice_queue.get_nowait()
                 result.append(False)
                 done.set()
-            if owned_icon:
-                api.destroy_icon(owned_icon)
+            self._release_icon()
             api.unregister_class(class_name, instance)
             self._ready.set()
 

@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory = $true)][string]$PayloadDirectory,
     [Parameter(Mandatory = $true)][string]$DisplayVersion,
     [Parameter(Mandatory = $true)][string]$ProductVersion,
-    [Parameter(Mandatory = $true)][string]$IconFile
+    [Parameter(Mandatory = $true)][string]$IconFile,
+    [Parameter(Mandatory = $true)][string]$AppUserModelId
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,7 +38,7 @@ try {
 }
 
 & $candle -nologo -arch x64 -out $object "-dPayloadDir=$PayloadDirectory" "-dIconFile=$IconFile" `
-    "-dDisplayVersion=$DisplayVersion" "-dProductVersion=$ProductVersion" "-dProductCode=$productCode" $installerSource
+    "-dAppUserModelId=$AppUserModelId" "-dDisplayVersion=$DisplayVersion" "-dProductVersion=$ProductVersion" "-dProductCode=$productCode" $installerSource
 if ($LASTEXITCODE -ne 0) { throw "WiX candle failed with exit code $LASTEXITCODE" }
 
 & $light -nologo -cultures:zh-cn -ext $ui -spdb -out $output $object

@@ -47,7 +47,7 @@ try {
     & $Python -S -m pytest -q -p no:cacheprovider --basetemp (Join-Path $buildDir "pytest-release")
     Assert-LastExit "pytest"
 
-    $json = & $Python -c "import json; from gaojixu import version as v; print(json.dumps({key: getattr(v, key) for key in ('APP_NAME', 'MARKETING_VERSION', 'VERSION_LABEL', 'WINDOWS_BUILD')}))"
+    $json = & $Python -c "import json; from gaojixu import version as v; print(json.dumps({key: getattr(v, key) for key in ('APP_NAME', 'APP_USER_MODEL_ID', 'MARKETING_VERSION', 'VERSION_LABEL', 'WINDOWS_BUILD')}))"
     Assert-LastExit "read Windows release version"
     $version = $json | ConvertFrom-Json
     $segments = $version.MARKETING_VERSION.Split(".")
@@ -62,9 +62,10 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $assets "index.html"))) {
         throw "UI assets were not found at $assets"
     }
-    $icon = Join-Path $buildDir "GaoJiXu.ico"
-    & $Python -S -c "from PIL import Image; import sys; Image.open(sys.argv[1]).save(sys.argv[2], sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])" (Join-Path $macAssets "GaoJiXuIcon.png") $icon
-    Assert-LastExit "convert application icon"
+    $icon = Join-Path $assets "GaoJiXu.ico"
+    if (-not (Test-Path -LiteralPath $icon)) {
+        throw "Application icon missing. Run python generate_icon.py."
+    }
 
     foreach ($executable in @("GaoJiXu-cli", "GaoJiXu")) {
         $work = Join-Path $buildDir $executable
@@ -92,7 +93,7 @@ VSVersionInfo(
 
     if (-not $SkipInstaller) {
         & (Join-Path $PSScriptRoot "installer\build-msi.ps1") -WorkDirectory $buildDir -DistributionDirectory $dist -PayloadDirectory $payloads `
-            -DisplayVersion $version.MARKETING_VERSION -ProductVersion $productVersion -IconFile $icon
+            -DisplayVersion $version.MARKETING_VERSION -ProductVersion $productVersion -IconFile $icon -AppUserModelId $version.APP_USER_MODEL_ID
     }
 } finally {
     $env:PYTHONPATH = $oldPythonPath

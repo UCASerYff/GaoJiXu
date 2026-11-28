@@ -29,6 +29,10 @@ WIDGET_TYPES = ("calendar", "net-worth", "expenses", "benefits", "adventure")
 APP_REGISTRY = r"Software\GaoSeries\GaoJiXu"
 PROTOCOL_REGISTRY = r"Software\Classes\gaojixu"
 SHELL_COMPONENTS = {"GaoJiXuProtocol", "GaoJiXuShortcuts"}
+SHELL_ICON = "GaoJiXuIcon.ico"
+SHELL_APP_ID = "GaoSeries.GaoJiXu"
+# Include small, medium, large and Explorer shell icon sizes at the supported scales.
+SHELL_ICON_SIZES = {16, 20, 24, 28, 30, 32, 36, 40, 42, 48, 56, 60, 64, 72, 80, 84, 96, 112, 128, 256}
 
 if not __debug__:
     raise RuntimeError("The installer smoke test must run with Python assertions enabled.")
@@ -42,26 +46,120 @@ def msi_property(package: Path, key: str) -> str:
         database.Close()
 
 
-def verify_shell_entries(package: Path) -> None:
+def verify_shell_entries(package: Path) -> dict[int, bytes]:
+    verify_icons = tuple(map(int, msi_property(package, "ProductVersion").split("."))) >= (4, 6, 9)
     database = msilib.OpenDatabase(str(package), msilib.MSIDBOPEN_READONLY)
-    template = database.GetSummaryInformation(0).GetProperty(7)
-    if isinstance(template, bytes):
-        template = template.decode("ascii")
-    assert template.lower().startswith("x64;")
-    view = database.OpenView("SELECT `Target`, `Arguments` FROM `Shortcut`")
-    view.Execute(None)
-    arguments = []
-    while record := view.Fetch():
-        assert record.GetString(1) == "[INSTALLFOLDER]GaoJiXu.exe"
-        arguments.append(record.GetString(2) or "")
-    assert sorted(arguments) == sorted(["", *(f"--widget {widget}" for widget in WIDGET_TYPES)])
-    view = database.OpenView("SELECT `Key`, `Value` FROM `Registry` WHERE `Root` = 1")
-    view.Execute(None)
-    while record := view.Fetch():
-        if record.GetString(1) == r"Software\Classes\gaojixu\shell\open\command":
-            assert record.GetString(2) == '"[INSTALLFOLDER]GaoJiXu.exe" "%1"'
-            return
-    raise AssertionError("The MSI does not declare the per-user URI handler")
+    try:
+        template = database.GetSummaryInformation(0).GetProperty(7)
+        if isinstance(template, bytes):
+            template = template.decode("ascii")
+        assert template.lower().startswith("x64;")
+        shortcuts = msi_records(database, "SELECT `Shortcut`, `Target`, `Arguments`, `Icon_`, `IconIndex` FROM `Shortcut`")
+        assert all(row.GetString(2) == "[INSTALLFOLDER]GaoJiXu.exe" for row in shortcuts)
+        arguments = [row.GetString(3) or "" for row in shortcuts]
+        assert sorted(arguments) == sorted(["", *(f"--widget {widget}" for widget in WIDGET_TYPES)])
+        registry = {row.GetString(1): row.GetString(2) for row in msi_records(
+            database, "SELECT `Key`, `Value` FROM `Registry` WHERE `Root` = 1")}
+        assert registry.get(PROTOCOL_REGISTRY + r"\shell\open\command") == '"[INSTALLFOLDER]GaoJiXu.exe" "%1"'
+        if verify_icons:
+            assert registry[PROTOCOL_REGISTRY + r"\DefaultIcon"] == '"[INSTALLFOLDER]GaoJiXu.exe",0'
+            assert all(row.GetString(4) == SHELL_ICON and row.GetInteger(5) in (0, -2147483648) for row in shortcuts)
+            properties = msi_records(database, "SELECT `Shortcut_`, `PropVariantValue` FROM `MsiShortcutProperty` "
+                                     "WHERE `PropertyKey` = 'System.AppUserModel.ID'")
+            expected = sorted((row.GetString(1), SHELL_APP_ID) for row in shortcuts)
+            assert sorted((row.GetString(1), row.GetString(2)) for row in properties) == expected
+    finally:
+        database.Close()
+    if verify_icons:
+        assert msi_property(package, "ARPPRODUCTICON") == SHELL_ICON
+        frames = icon_file_frames(msi_shell_icon(package))
+        assert SHELL_ICON_SIZES <= frames.keys(), f"MSI icon lacks sizes: {SHELL_ICON_SIZES - frames.keys()}"
+        return frames
+    return {}
+
+
+def msi_shell_icon(package: Path) -> bytes:
+    dll = ctypes.windll.msi
+    view, record = ctypes.c_uint(), ctypes.c_uint()
+    query = f"SELECT `Data` FROM `Icon` WHERE `Name` = '{SHELL_ICON}'"
+    with native_msi_database(package) as database:
+        assert dll.MsiDatabaseOpenViewW(database, query, ctypes.byref(view)) == 0
+        try:
+            assert dll.MsiViewExecute(view, 0) == 0
+            assert dll.MsiViewFetch(view, ctypes.byref(record)) == 0
+            try:
+                size = ctypes.c_uint(dll.MsiRecordDataSize(record, 1))
+                assert size.value > 0
+                data = ctypes.create_string_buffer(size.value)
+                assert dll.MsiRecordReadStream(record, 1, data, ctypes.byref(size)) == 0
+                assert size.value == ctypes.sizeof(data)
+                return data.raw
+            finally:
+                dll.MsiCloseHandle(record)
+        finally:
+            dll.MsiCloseHandle(view)
+
+
+def icon_file_frames(icon: bytes) -> dict[int, bytes]:
+    reserved, kind, count = struct.unpack_from("<HHH", icon)
+    assert (reserved, kind) == (0, 1) and count > 0
+    frames = {}
+    for index in range(count):
+        width, height, _, _, _, _, length, offset = struct.unpack_from("<BBBBHHII", icon, 6 + 16 * index)
+        width, height = width or 256, height or 256
+        assert width == height and width not in frames and length > 0 and offset + length <= len(icon)
+        frames[width] = icon[offset:offset + length]
+    return frames
+
+
+def check_icon_resources(executable: Path, expected: dict[int, bytes]) -> None:
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    def bind(name, result, *arguments):
+        api = getattr(kernel, name)
+        api.argtypes = arguments
+        api.restype = result
+        return api
+
+    ptr = ctypes.c_void_p
+    load = bind("LoadLibraryExW", ptr, ctypes.c_wchar_p, ptr, ctypes.c_uint)
+    free = bind("FreeLibrary", ctypes.c_int, ptr)
+    find = bind("FindResourceW", ptr, ptr, ptr, ptr)
+    load_resource = bind("LoadResource", ptr, ptr, ptr)
+    lock = bind("LockResource", ptr, ptr)
+    size = bind("SizeofResource", ctypes.c_uint, ptr, ptr)
+    module = load(str(executable), None, 0x02)  # LOAD_LIBRARY_AS_DATAFILE
+    assert module, f"Cannot inspect icon resources in {executable}"
+    try:
+        def read(kind, resource_id):
+            info = find(module, resource_id, kind)
+            assert info, (executable, kind, resource_id)
+            length = size(module, info)
+            data = lock(load_resource(module, info))
+            assert length > 0 and data, (executable, kind, resource_id)
+            return ctypes.string_at(data, length)
+
+        group = read(14, 1)  # RT_GROUP_ICON, the executable's first icon group.
+        reserved, kind, count = struct.unpack_from("<HHH", group)
+        assert (reserved, kind, count) == (0, 1, len(expected)) and len(group) == 6 + 14 * count
+        frames = {}
+        resource_ids = {}
+        for index in range(count):
+            width, height, _, _, _, _, length, resource_id = struct.unpack_from("<BBBBHHIH", group, 6 + 14 * index)
+            width, height = width or 256, height or 256
+            assert width == height and width not in frames
+            payload = read(3, resource_id)  # RT_ICON
+            assert len(payload) == length
+            frames[width] = payload
+            resource_ids[width] = resource_id
+        assert frames == expected, f"{executable.name} icon images differ from the installer icon"
+        lookup = ctypes.windll.user32.LookupIconIdFromDirectoryEx
+        lookup.argtypes = (ptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint)
+        directory = ctypes.create_string_buffer(group)
+        for width, resource_id in resource_ids.items():
+            assert lookup(directory, True, width, width, 0) == resource_id, (executable.name, width)
+    finally:
+        free(module)
 
 
 def msi_records(database, sql):
@@ -631,7 +729,7 @@ def verify_checksum(package: Path) -> None:
 
 def smoke(package: Path, legacy: Path | None, register_shell: bool, upgrade_from: Path | None, isolate_identities=False) -> None:
     verify_checksum(package)
-    verify_shell_entries(package)
+    icon_frames = verify_shell_entries(package)
     product_code = msi_property(package, "ProductCode")
     product_version = msi_property(package, "ProductVersion")
     version = "+".join(product_version.rsplit(".", 1))
@@ -715,6 +813,10 @@ def smoke(package: Path, legacy: Path | None, register_shell: bool, upgrade_from
                 assert data_manifest(profile) == original
             check_x64(app)
             check_x64(cli)
+            if icon_frames:
+                check_icon_resources(app, icon_frames)
+                check_icon_resources(cli, icon_frames)
+                print(f"MSI and installed x64 icon frames match, selected exactly by User32: {sorted(icon_frames)}")
             assert Path(read_registry(test_key, "InstallPath")) == install
             if register_shell:
                 assert read_registry(protocol_key + r"\shell\open\command") == f'"{app}" "%1"'

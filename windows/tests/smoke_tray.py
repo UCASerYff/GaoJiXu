@@ -206,7 +206,7 @@ def observe_app(work, arguments):
     runpy.run_path(str(ROOT / "launch.py"), run_name="__main__")
 
 
-def run_private(work, evidence, executable=None):
+def run_private(work, evidence, executable=None, *, inspect_main_window=None):
     desktop = PrivateWindows()
     profile, runtime = work / "library", work / "runtime"
     runtime.mkdir()
@@ -322,6 +322,8 @@ def run_private(work, evidence, executable=None):
             assert desktop.find("tray")[tray][0] == app.pid
         first_main = until(lambda: one_window("app"), "one actual Chromium app window")
         assert api(base, "state")["status"] == "ready"
+        if inspect_main_window:
+            inspect_main_window(first_main, base)
         if not executable:
             browser_step(base, "ready")
         desktop.send(first_main, WM_CLOSE)
@@ -410,7 +412,7 @@ def run_private(work, evidence, executable=None):
                 app.kill()
                 app.wait(timeout=5)
 
-def launch_private(work, evidence, executable):
+def launch_private(work, evidence, executable, *, script=SCRIPT):
     user = ct.WinDLL("user32", use_last_error=True)
     kernel = ct.WinDLL("kernel32", use_last_error=True)
     create = bind(user, "CreateDesktopW", win.HANDLE, win.LPCWSTR, win.LPCWSTR, ct.c_void_p,
@@ -429,7 +431,7 @@ def launch_private(work, evidence, executable):
         raise ct.WinError(ct.get_last_error())
     child = ProcessInformation()
     try:
-        args = [sys.executable, "-B", str(SCRIPT), "--private-child", str(work)]
+        args = [sys.executable, "-B", str(script), "--private-child", str(work)]
         if evidence:
             args += ["--evidence", str(evidence)]
         if executable:

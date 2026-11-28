@@ -31,6 +31,12 @@ class TestWindows:
     def belongs(self, hwnd, lease):
         return self.windows.get(lease) == hwnd
 
+    def update_shell_icon(self, hwnd, lease):
+        assert self.belongs(hwnd, lease)
+
+    def forget_shell_icon(self, hwnd, lease):
+        assert not self.belongs(hwnd, lease)
+
     def visible(self, hwnd):
         return hwnd in self.windows.values()
 

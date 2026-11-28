@@ -16,6 +16,7 @@ import time
 from urllib.parse import urlencode
 
 from gaojixu.errors import AppError
+from gaojixu.shell_icon import WindowIcons
 
 _logger = logging.getLogger(__name__)
 TYPES = {
@@ -64,6 +65,7 @@ class WidgetWindows:
         self._foreground = bind(user, "SetForegroundWindow", win.BOOL, win.HWND)
         self._post = bind(user, "PostMessageW", win.BOOL, win.HWND, win.UINT, win.WPARAM, win.LPARAM)
         self._dpi = bind(user, "SetThreadDpiAwarenessContext", win.HANDLE, win.HANDLE)
+        self.shell_icons = WindowIcons()
 
     def _matches_image(self, hwnd, executable):
         pid = win.DWORD()
@@ -101,10 +103,18 @@ class WidgetWindows:
             return True
 
         self._enumerate(find, 0)
+        if match:
+            self.update_shell_icon(match, lease)
         return match
 
     def belongs(self, hwnd, lease):
         return self._identity(hwnd, f"GaoJiXuWidget.{lease}") == 1
+
+    def update_shell_icon(self, hwnd, lease):
+        self.shell_icons.apply(hwnd, lease)
+
+    def forget_shell_icon(self, hwnd, lease):
+        self.shell_icons.forget(hwnd, lease)
 
     def visible(self, hwnd):
         return bool(self._visible(hwnd))
@@ -156,6 +166,7 @@ class WidgetWindows:
         self._foreground(hwnd)
 
     def close(self, hwnd):
+        self.shell_icons.ungroup(hwnd)
         self._post(hwnd, 0x10, 0, 0)  # WM_CLOSE
 
 
@@ -248,10 +259,12 @@ class DesktopWidgets:
         for kind, window in list(self._active.items()):
             if window.hwnd:
                 if self.native.belongs(window.hwnd, window.lease):
+                    self.native.update_shell_icon(window.hwnd, window.lease)
                     rect = self.native.placement(window.hwnd)
                     if _valid_rect(rect):
                         self._change(kind, rect=rect)
                     continue
+                self.native.forget_shell_icon(window.hwnd, window.lease)
                 self._change(kind, open=False)
                 del self._active[kind]
                 continue

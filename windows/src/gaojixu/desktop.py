@@ -157,8 +157,12 @@ class DesktopMain:
         self._retry = None
 
     def _sample(self):
-        if self._hwnd and not self.native.belongs(self._hwnd, self._lease):
-            self._hwnd = None
+        if self._hwnd:
+            if self.native.belongs(self._hwnd, self._lease):
+                self.native.update_shell_icon(self._hwnd, self._lease)
+            else:
+                self.native.forget_shell_icon(self._hwnd, self._lease)
+                self._hwnd = None
         if self._lease and not self._hwnd:
             self._hwnd = self.native.discover(self._lease, self.executable)
             if self._hwnd:
@@ -247,7 +251,7 @@ class DesktopMain:
 class DesktopSession:
     def __init__(self, url, instance_key):
         self.url = url
-        self.main = self.widgets = self.browser = None
+        self.main = self.widgets = self.browser = self.native = None
         executable = chromium()
         if executable is not None:
             from gaojixu.desktop_browser import BrowserJob
@@ -258,6 +262,7 @@ class DesktopSession:
                 self.browser = BrowserJob()
             except (OSError, AttributeError):
                 return
+            self.native = native
             self.main = DesktopMain(url, executable, native, self.browser)
             self.widgets = start_widgets(url, instance_key, browser=self.browser, native=native, executable=executable)
 
@@ -289,8 +294,12 @@ class DesktopSession:
             if self.widgets:
                 self.widgets.close()
         finally:
-            if self.browser:
-                self.browser.close()
+            try:
+                if self.browser:
+                    self.browser.close()
+            finally:
+                if self.native:
+                    self.native.shell_icons.close()
 
 
 def forward_target(url, target, instance_key):

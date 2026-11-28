@@ -13,6 +13,10 @@ def asset_dir() -> Path:
     return Path(__file__).resolve().parent / "assets"
 
 
+def windows_icon_path() -> Path:
+    return asset_dir() / "GaoJiXu.ico"
+
+
 def mac_asset_dir() -> Path:
     frozen = getattr(sys, "_MEIPASS", None)
     if frozen:

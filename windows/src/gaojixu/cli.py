@@ -11,6 +11,7 @@ from gaojixu.errors import AppError
 from gaojixu.monthly_signal import signal as signal_monthly_change
 from gaojixu.monthly_notices import MonthlyNotices
 from gaojixu.native_tray import start_tray
+from gaojixu.resources import windows_icon_path
 from gaojixu.store import Store, default_data_dir
 from gaojixu.version import VERSION_LABEL
 from gaojixu.web import serve
@@ -110,6 +111,7 @@ def _run(args, directory, instance, target, *, graphical):
                 open_widgets=lambda: open_desktop("#widgets"),
                 open_notice=lambda: open_desktop("#fixed-expenses"),
                 language=lambda: store.settings.get("language", "system"),
+                icon_path=windows_icon_path(),
             )
             server.desktop_tray = tray
         instance.publish(server.server_address[1])
