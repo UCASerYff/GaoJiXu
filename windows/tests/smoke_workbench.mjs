@@ -80,13 +80,48 @@ async function edit(values) {
   })(${JSON.stringify(values)})`);
   await close();
 }
-async function snapshot(name,width,height,dpi) {
+async function snapshot(name,width,height,dpi,focus) {
   await cdp("Emulation.setDeviceMetricsOverride",{width,height,deviceScaleFactor:dpi,mobile:false});
   await delay(230);
   const overflow = await js("document.documentElement.scrollWidth - innerWidth");
   assert.ok(overflow <= 2, name + " overflows horizontally by " + overflow);
+  if (focus) await js(`document.querySelector(${JSON.stringify(focus)}).scrollIntoView({block:"center",inline:"nearest"})`);
   const image = await cdp("Page.captureScreenshot",{format:"png"});
   await writeFile(join(output,name + ".png"),Buffer.from(image.data,"base64"));
+}
+
+async function verifyPaymentsChart(theme, payments) {
+  await js(`api("/api/settings",{appearance:${JSON.stringify(theme)}})`);
+  for (const width of [360,600,900]) {
+    await snapshot(`payments-${theme}-${width}`,width,820,1,".fixed-stat-chart");
+    const result = await js(`(() => {
+      const chart = document.querySelector(".fixed-stat-chart");
+      return {theme:document.body.dataset.theme, rows:[...chart.children].map(row => {
+        const [month, track, value] = row.children;
+        const bar = track.getBoundingClientRect();
+        return {month:month.dateTime, count:parseInt(value.textContent),
+          amount:Number(value.querySelector("b").textContent.replace(/[^0-9.]/g,"")),
+          left:bar.left, width:bar.width, fill:track.firstElementChild.getBoundingClientRect().width,
+          compact:bar.top >= value.getBoundingClientRect().bottom, overflow:row.scrollWidth-row.clientWidth};
+      })};
+    })()`);
+    assert.equal(result.theme,theme);
+    assert.equal(result.rows.length,12);
+    assert.equal(new Set(result.rows.map(row => row.month)).size,12);
+    const first = result.rows[0];
+    const maximum = Math.max(...Object.values(payments).map(([amount]) => amount));
+    assert.ok(first.width > 100);
+    for (const row of result.rows) {
+      const [amount,count] = payments[row.month] || [0,0];
+      assert.equal(row.amount,amount);
+      assert.equal(row.count,count);
+      assert.ok(row.overflow <= 1);
+      assert.ok(Math.abs(first.left-row.left) < 0.1 && Math.abs(first.width-row.width) < 0.1,
+        `Payment chart at ${width}px in ${theme} uses different plot widths or origins`);
+      assert.ok(Math.abs(row.fill-amount/maximum*row.width) < 0.1);
+      assert.equal(row.compact,width === 360);
+    }
+  }
 }
 
 try {
@@ -243,8 +278,25 @@ try {
   await click('#fixed-sections [data-route="benefits"]');
   await textHas("#benefits","Recorded this period");
   await snapshot("benefits-english-dark-1060",1060,730,1.5);
+
+  await selectRoute("fixed-expenses");
+  await section("fixed-expenses");
+  const payments = await js(`(async () => {
+    const [year,month] = state.monthly.monthKey.split("-").map(Number);
+    const dates = [4,3,2,1].map(offset => new Date(Date.UTC(year,month-1-offset,7)).toISOString().slice(0,10));
+    const amounts = [9.99,299.99,9999.99,5000];
+    const fixture = await api("/api/monthly/subscription",{name:"QA monthly chart",price:9.99,start:dates[0]});
+    for (const [index,amount] of amounts.entries()) {
+      await api("/api/monthly/pay",{subscriptionID:fixture.id,due:dates[index],paidAt:dates[index],amount,skipped:index===3});
+    }
+    return Object.fromEntries(dates.slice(0,3).map((date,index) => [date.slice(0,7),[amounts[index],1]]));
+  })()`);
+  await click(fixed("expense-tab","review"));
+  await waitFor(".fixed-stat-chart");
+  await verifyPaymentsChart("light",payments);
+  await verifyPaymentsChart("dark",payments);
   assert.deepEqual(failures,[]);
-  console.log("Workbench smoke passed for fixed income, expenses, benefits, widgets, dark mode, English and relaunch routes");
+  console.log("Workbench smoke passed for fixed income, expenses, payment bars, benefits, widgets, dark mode, English and relaunch routes");
 } finally {
   websocket.close();
 }

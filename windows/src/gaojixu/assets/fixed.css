@@ -68,8 +68,9 @@
 .fixed-fields .check-row { min-height:34px; }
 .fixed-fields .check-row:has([name="receivedIsConfirmed"],[name="rememberAccount"],[name="stacking"],[name="privacy"],[name="notifications"]) { grid-column:1 / -1; }
 .fixed-fields > button { justify-self:start; }
-.fixed-stat-row { display:grid; grid-template-columns:68px minmax(20px,1fr) minmax(108px,auto); align-items:center; gap:8px; padding:5px 0; }
-.fixed-stat-row > small { text-align:right; }
+.fixed-stat-chart { display:grid; grid-template-columns:max-content minmax(0,1fr) fit-content(42%); column-gap:8px; }
+.fixed-stat-row { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; padding:5px 0; }
+.fixed-stat-row > small { min-width:0; max-width:16rem; overflow-wrap:anywhere; text-align:end; }
 .fixed-unavailable { max-width:620px; display:flex; flex-wrap:wrap; align-items:flex-start; gap:10px; }
 .fixed-unavailable > .ui-icon { font-size:19px; color:var(--accent-strong); margin-top:3px; }
 .fixed-unavailable > .row { flex:1 1 100%; }
@@ -80,6 +81,12 @@
   .fixed-kpis button { grid-template-columns:minmax(0,1fr); gap:1px; min-height:69px; }
   .fixed-kpis button strong { font-size:21px; }
   .fixed-totals .fixed-panel { margin-bottom:0; }
+}
+@container (max-width:28rem) {
+  .fixed-stat-chart { grid-template-columns:max-content minmax(0,1fr); }
+  .fixed-stat-row { row-gap:4px; }
+  .fixed-stat-row > small { grid-column:2; grid-row:1; max-width:none; }
+  .fixed-stat-row > .bar { grid-column:1 / -1; grid-row:2; }
 }
 @media (max-width:420px) {
   .fixed-fields { grid-template-columns:minmax(0,1fr); }

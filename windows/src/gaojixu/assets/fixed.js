@@ -421,8 +421,9 @@
       '<div class="fixed-totals">' + panel(t("本月确认支付","Confirmed payments this month"),'<div class="metric">' + displayCurrency(points.at(-1).amount,code) + "</div>") +
       panel(t("当前订阅月化预计","Estimated monthly cost"),'<div class="metric">' + displayCurrency([...categoryTotals.values()].reduce((a,b) => a+b,0),code) + "</div>") +
       panel(t("按现价预计全年","Projected annual cost at current prices"),'<div class="metric">' + displayCurrency([...categoryTotals.values()].reduce((a,b) => a+b,0) * 12,code) + "</div>") + "</div>" +
-      panel(t("近十二个月 · 实际支付","Last twelve months · Payments"),points.map(point => '<div class="fixed-stat-row"><span>' + point.month + '</span><div class="bar"><span style="width:' +
-        point.amount/max*100 + '%"></span></div><small>' + point.count + t(" 笔 · "," payment(s) ·") + displayCurrency(point.amount,code) + "</small></div>").join("")) +
+      panel(t("近十二个月 · 实际支付","Last twelve months · Payments"),'<div class="fixed-stat-chart">' + points.map(point =>
+        '<div class="fixed-stat-row"><time datetime="' + point.month + '">' + point.month + '</time><div class="bar" aria-hidden="true"><span style="width:' +
+        point.amount/max*100 + '%"></span></div><small>' + point.count + t(" 笔 · "," payment(s) · ") + displayCurrency(point.amount,code) + "</small></div>").join("") + "</div>") +
       panel(t("按分类月折算","Monthly estimate by category"),[...categoryTotals].map(([category,amount]) => row(category,"",displayCurrency(amount,code))).join("") || empty(t("暂无有效订阅。","No active subscriptions."))) +
       panel(t("订阅使用回顾","Subscription review"),inCurrency.map(sub => {
         const detail = sub.cancelledAt ? t("已取消 · ","Cancelled · ") + sub.cancelledAt : sub.archived ? t("已归档","Archived") :
