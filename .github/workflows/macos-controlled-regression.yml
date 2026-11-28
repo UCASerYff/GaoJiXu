@@ -1,0 +1,93 @@
+name: macOS controlled regression
+on:
+  push:
+    branches: ['codex/v407-remove-benefits-verify-457e3c7459eb']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Confirm source and static workbench structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = 457e3c7459eb936169f6e39141453c14a78f648d
+          test "$(git diff --name-only HEAD^ HEAD)" = .github/workflows/macos-controlled-regression.yml
+          test "$(uname -m)" = arm64
+          python3 -B Tests/WorkbenchStructureRegression.py
+      - name: Compile framework, host and WidgetKit and run official regressions
+        shell: bash
+        run: bash scripts/verify_macos.sh 4.07 9
+      - name: Run isolated savings and adventure state safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          work="$(mktemp -d "$RUNNER_TEMP/gaojixu-safety.XXXXXX")"
+          trap 'rm -rf -- "$work"' EXIT
+          export TMPDIR="$work"
+          sdk="$(xcrun --sdk macosx --show-sdk-path)"
+          sources=(FixedIncomeModels FixedIncomeStore Models AccountingModels GameCatalog HeroStats SavingsStore StorePersistence StoreWidgetSnapshot StoreLedger StoreGoals StoreBattle StoreGameSystems MonthlyLedgerBridge WidgetSnapshot AppTheme CSVReview)
+          input=()
+          for source in "${sources[@]}"; do input+=("Sources/$source.swift"); done
+          xcrun swiftc -swift-version 5 -parse-as-library -sdk "$sdk" -target arm64-apple-macosx14.0 \
+            -module-cache-path "$work/cache" -D UNIT_TEST \
+            -framework SwiftUI -framework AppKit -framework Combine -framework CoreText \
+            -framework CryptoKit "${input[@]}" Tests/SavingsSafetyRegression.swift -o "$work/SavingsSafetyRegression"
+          "$work/SavingsSafetyRegression"
+      - name: Run offscreen SceneKit exploration rendering
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          work="$(mktemp -d "$RUNNER_TEMP/gaojixu-scenekit.XXXXXX")"
+          trap 'rm -rf -- "$work"' EXIT
+          export TMPDIR="$work"
+          sdk="$(xcrun --sdk macosx --show-sdk-path)"
+          xcrun swiftc -swift-version 5 -parse-as-library -sdk "$sdk" -target arm64-apple-macosx14.0 \
+            -module-cache-path "$work/cache" -framework AppKit -framework SwiftUI \
+            -framework SceneKit -framework ImageIO Sources/AppLanguage.swift GameWorld/*.swift \
+            Tests/ExplorerWorldRegression.swift -o "$work/ExplorerWorldRegression"
+          "$work/ExplorerWorldRegression" "$work/explorer"
+          test "$(find "$work" -maxdepth 1 -name 'explorer-*.png' | wc -l | tr -d ' ')" = 7
+
+  windows-upgrade:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+      - name: Build the new installer and run source regressions
+        shell: pwsh
+        run: ./build.ps1
+      - name: Obtain and verify the previously released installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = 'https://github.com/UCASerYff/GaoJiXu/releases/download/windows-v4.06-build.9'
+          $name = 'GaoJiXu-Windows-4.06-build9-x64.msi'
+          Invoke-WebRequest -Uri "$base/$name" -OutFile "dist/$name"
+          Invoke-WebRequest -Uri "$base/$name.sha256" -OutFile "dist/$name.sha256"
+          $actual = (Get-FileHash -LiteralPath "dist/$name" -Algorithm SHA256).Hash
+          if ($actual.ToLowerInvariant() -ne 'a34c842d481e3b43a956f410d9d8869c86622f975e57ec0dd6939fd7acee7f1b') {
+            throw 'Unexpected SHA-256 for the previous installer'
+          }
+      - name: Upgrade real shell entries and retain isolated older data
+        shell: pwsh
+        run: python tests/smoke_install.py dist/GaoJiXu-Windows-4.07-x64.msi --register-shell --upgrade-from dist/GaoJiXu-Windows-4.06-build9-x64.msi
