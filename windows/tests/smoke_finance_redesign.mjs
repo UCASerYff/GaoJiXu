@@ -60,9 +60,9 @@ async function open(route, after) {
     .filter(button => button.getClientRects().length).at(-1).click()`);
   await waitFor(`#${route}:not([hidden]) ${after}`);
 }
-async function screenshot(name,width,height,pixelRatio,selector) {
+async function screenshot(name,width,height,pixelRatio,selector,focus = false) {
   await cdp("Emulation.setDeviceMetricsOverride",{width,height,deviceScaleFactor:pixelRatio,mobile:false});
-  await script(`window.scrollTo(0,0)`);
+  await script(focus ? `${q(selector)}.scrollIntoView({block:"start",inline:"nearest"})` : "window.scrollTo(0,0)");
   await delay(175);
   assert.ok(await script("document.documentElement.scrollWidth <= innerWidth + 2"),name+" page overflow");
   if (selector) assert.ok(await script(`((node) => node.scrollWidth <= node.clientWidth + 2)(${q(selector)})`),name+" content overflow");
@@ -78,6 +78,43 @@ async function setValue(selector,value) {
   })(${q(selector)},${JSON.stringify(value)})`);
 }
 const sub = selector => `#editor [name="${selector}"]`;
+
+async function verifyCategoryCharts(appearance, expected) {
+  await script(`api("/api/settings",{appearance:${JSON.stringify(appearance)}})`);
+  await waitFor("#reports .finance-category-mix");
+  for (const width of [360,600,900,1080,1400]) {
+    await screenshot(`category-mix-${appearance}-${width}`,width,820,1,".finance-report-secondary",true);
+    const measured = await script(`(() => {
+      return {appearance:document.body.dataset.theme, charts:[...document.querySelectorAll("#reports .finance-category-mix")].map(chart => ({
+        width:chart.getBoundingClientRect().width,
+        rows:[...chart.children].map(row => {
+          const label = row.querySelector("strong"), value = row.querySelector(".finance-number"), bar = row.querySelector("progress");
+          const rect = bar.getBoundingClientRect();
+          const [share,amount] = value.textContent.split(" · ");
+          return {left:rect.left,width:rect.width,share:parseInt(share),position:bar.position,label:label.textContent,
+            amount:Number(amount.replace(/[^0-9.]/g,"")),overflow:row.scrollWidth-row.clientWidth,
+            below:rect.top >= Math.max(label.getBoundingClientRect().bottom,value.getBoundingClientRect().bottom)};
+        })
+      }))};
+    })()`);
+    assert.equal(measured.appearance,appearance);
+    assert.equal(measured.charts.length,2);
+    assert.ok(measured.charts.every(({rows}) => rows.every(row =>
+      Math.abs(row.width-rows[0].width) < 0.1 && Math.abs(row.left-rows[0].left) < 0.1)),
+      `${appearance} ${width}px uneven expense/income tracks: ${JSON.stringify(measured.charts.map(({rows}) => rows.map(row => row.width)))}`);
+    measured.charts.forEach(({width:chartWidth,rows},index) => {
+      const amounts = expected[index];
+      const total = amounts.reduce((sum,value) => sum+value,0);
+      assert.deepEqual(rows.map(row => row.amount),amounts);
+      for (const row of rows) {
+        assert.equal(row.share,Math.trunc(row.amount/total*100));
+        assert.ok(Math.abs(row.position-row.amount/total) < 1e-9);
+        assert.ok(row.width > 30 && row.overflow <= 1 && row.label.length > 0);
+        assert.equal(row.below,chartWidth <= 320);
+      }
+    });
+  }
+}
 
 try {
   await cdp("Page.enable");
@@ -187,8 +224,22 @@ try {
   await script('api("/api/settings",{language:"en"})');
   await textHas("#overview","Financial overview");
   await textHas("#overview","Cash flow calendar");
+  await script(`(async () => {
+    const accountID = state.accounts.find(account => account.currency === "CNY").id;
+    for (const [kind,categoryID,amount] of [["expense","utilities",2380.41],["income","investment-income",2083.13],["income","gift-income",17.65]]) {
+      await api("/api/ledger/save",{kind,accountID,amount,categoryID,date:state.today,note:"QA category chart"});
+    }
+  })()`);
+  await cdp("Page.navigate",{url:base + "#reports"});
+  await waitFor("#reports:not([hidden]) .finance-category-mix");
+  const expected = [[2380.41,380,42.75],[8800,2083.13,17.65]];
+  await verifyCategoryCharts("light",expected);
+  await verifyCategoryCharts("dark",expected);
+  await setValue('#reports [name="finance-currency"]',"USD");
+  await textHas("#reports","No expenses this month");
+  await textHas("#reports","No income this month");
   assert.deepEqual(failures,[]);
-  console.log("Finance redesign smoke passed: calendar keyboard/month/date flow, ledger editor, categories, reports, goals, English, light/dark and 150% scaling");
+  console.log("Finance redesign smoke passed: calendar keyboard/month/date flow, ledger editor, category proportions, reports, goals, English, light/dark and 150% scaling");
 } finally {
   socket.close();
 }

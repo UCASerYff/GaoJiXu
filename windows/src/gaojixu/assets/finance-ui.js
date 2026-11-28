@@ -907,8 +907,8 @@
             ${panel(t("月末净资产", "Month-end net worth"),"",lineChartMarkup("net-worth-chart",netSeries,months,currency))}
             ${panel(t("分类支出趋势", "Spending trends by category"),"",lineChartMarkup("category-trend-chart",categorySeries,months,currency))}
           </div><div class="finance-report-secondary">
-            ${panel(t("本月支出结构", "Expense breakdown"),"",categoryChart(model.expenseCategories,currency,t("本月没有支出", "No expenses this month")))}
-            ${panel(t("本月收入结构", "Income breakdown"),"",categoryChart(model.incomeCategories,currency,t("本月没有收入", "No income this month")))}
+            ${panel(t("本月支出结构", "Expense breakdown"),"",categoryChart(model.expenseCategories,currency,t("本月没有支出", "No expenses this month")),"","finance-category-panel")}
+            ${panel(t("本月收入结构", "Income breakdown"),"",categoryChart(model.incomeCategories,currency,t("本月没有收入", "No income this month")),"","finance-category-panel")}
           </div></div>`;
         for (const [id,series] of [["net-worth-chart",netSeries],["category-trend-chart",categorySeries]]) {
           const node = root.querySelector(`#${id}`);
